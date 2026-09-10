@@ -1,8 +1,11 @@
 # dsh-kenari-plugin 设计文档
 
 日期：2026-09-10
-状态：待实施
+状态：实施中 —— 第 0 期已完成并验证（2026-09-10，详见 `docs/handoff/003-*`）
 版本基线：dsh `0.1.5-rc.1`（源码 tag `dsh-v0.1.5-rc.1`）
+
+> 机制勘误（2026-09-10 源码核对后，详见 `docs/knowledge-base/dsh/dsh-source-verified.md`）：
+> patch 覆盖是**逐字段**的——`config` 作为单键整体替换，`disabled` 等是独立键；patch 行写 `name` 必须与目标行现有 name 一致否则整个 patch 被跳过。本文 3.3 节的"tool-web 覆盖需整行重写 config"按此修正为只需 `disabled: false`。
 
 ## 0. 环境前置条件
 
@@ -344,27 +347,18 @@ dsh 的 `llm-pi-ai` 行默认休眠（零路由），由 Settings → Models 页
 
 ## 4. 分期实施
 
-### 第 0 期｜骨架与配置层
+> 状态标记：✅ 已完成并验证 · 🚧 进行中 · ⬜ 未开始
 
-- `package.json`：`type: module`、`main: lib/index.js`、`dsh.bundle.patch`、`dsh.client`；peer 依赖 `@deepseek-ai/cordis`、`dsh-tools`、`dsh-web`、`dsh-credentials`、`schemastery`
-- `cordis.patch.yml`：按 3.3 设计
-- `src/index.ts`：Config schema + 空 apply
+### ✅ 第 0 期｜骨架与配置层（2026-09-10 完成，验证通过）
 
-Config 字段：
+- [x] `package.json`：`type: module`、`main: lib/index.js`、`dsh.bundle.patch`；peer 依赖定版：dsh 子包精确 `0.1.5-rc.1`、`@deepseek-ai/cordis ^4.0.2`、`@deepseek-ai/schemastery ^3.18.1-rc.1`
+- [x] `tsconfig.json`：NodeNext、strict、`tsc` 编译到 `lib/`
+- [x] `cordis.patch.yml`：insert `kenari` 行 + `web` config 覆盖 + `tool-web` `disabled: false`
+- [x] `src/index.ts`：Config schema（7 字段全部带默认值）+ 空 apply
+- [x] 验证：`dsh --profile web --dump-config` 出现 `# == dsh-kenari-plugin` 层
+- [x] 验证：`dsh --profile web` 启动无报错
 
-```
-apiKeyEnv: string      默认 'KENARI_API_KEY'
-baseURL: string        默认 'https://kenari.id'
-timeoutMs: number      默认 30000
-maxRetries: number     默认 2
-searchEnabled: boolean 默认 true
-fetchEnabled: boolean  默认 true
-fallbackEnabled: boolean 默认 true
-```
-
-**验证**：`dsh --profile <name> --dump-config` 出现 `# == dsh-kenari-plugin` 层；`dsh web` 启动无报错。
-
-### 第 1 期｜web fallback（核心价值）
+### ⬜ 第 1 期｜web fallback（核心价值）
 
 - `src/web/search.ts`：`POST /v1/web/search`，`max_results = min(req.maxResults ?? 5, 10)`，`results[]` → `WebSearchSource { url, title, snippet: content }`，`content` 留空
 - `src/web/fetch.ts`：`POST /v1/web/fetch` → `WebFetchResult { url, statusCode: 200, body: {kind:'text', content}, truncated }`，`links[]` 附在正文尾部
@@ -379,7 +373,7 @@ fallbackEnabled: boolean 默认 true
 4. 把 Kenari key 设为无效 → 观察回退到官方，日志有记录
 5. `fallbackEnabled: false` → 退回 dsh 默认（`deepseek-official` + `http`）
 
-### 第 2 期｜REST 工具
+### ⬜ 第 2 期｜REST 工具
 
 全部用 `defineTool` + `ctx.tools.register`，`inject: ['tools']`。
 
@@ -395,7 +389,7 @@ fallbackEnabled: boolean 默认 true
 
 **验证**：逐个工具在 Web UI 调用成功；`reuse_id` 第二次调用不重复计费；`allowed_x_handles` 与 `excluded_x_handles` 同传时报参数错误。
 
-### 第 3 期｜目录、计费与上下文
+### ⬜ 第 3 期｜目录、计费与上下文
 
 - `catalog.ts`：`GET /v1/models` 同步 + TTL 缓存，映射：
   - `id` → dsh 模型 id
@@ -414,7 +408,7 @@ fallbackEnabled: boolean 默认 true
 
 **验证**：Rp 0 账户下默认选中免费模型；余额告警触发；402 时提示切免费模型或充值。
 
-### 第 4 期｜设置界面
+### ⬜ 第 4 期｜设置界面
 
 Host 半边用 `ctx.settings.installSection(ctx, NS, Config, config, { validate })` 注册 namespace，Client 半边在 `src/client/` 导出 `./client`，`package.json` 声明 `dsh.client`。
 
@@ -424,7 +418,7 @@ key 状态复用 `describe()` 的 configured / source / writable。**环境变�
 
 **验证**：设置页出现卡片；key 只显示状态不显示明文；env 提供的 key 显示只读。
 
-### 第 5 期｜专属 LlmAdapter（可选增强）
+### ⬜ 第 5 期｜专属 LlmAdapter（可选增强）
 
 继承 `LlmAdapter` 实现 `stream()`，用 `ctx.llm.registerAdapter(['kenari'], adapter)` 注册。
 
@@ -436,7 +430,7 @@ key 状态复用 `describe()` 的 configured / source / writable。**环境变�
 
 **验证**：对比 `llm-pi-ai` 与自写 adapter 在同一模型上的差异；确认 `annotations` 与 `file-parser` 生效。
 
-### 第 6 期｜打包与文档
+### ⬜ 第 6 期｜打包与文档
 
 README 内容：安装、key 获取、三协议选择与 base URL 区别、fallback 说明、兼容预设、故障排查（401 / 402 / 405 三个高频错误）、MCP 可选方案、卸载。
 
@@ -444,16 +438,18 @@ README 内容：安装、key 获取、三协议选择与 base URL 区别、fallb
 
 ## 5. 实施前需确认的未知项
 
-1. **`ctx.settings.installSection()` 的完整签名**：文档给了用法示例，完整参数与返回值未逐字确认
-2. **`llm-pi-ai` provider 行的确切配置字段形状**：`settings.yaml` 里 `llm-pi-ai:` 节的 schema 未逐字确认
-3. **`disabled: false` 在 patch 中的确切写法**：`tool-web` 被 `dsh-web-app` 追加 `disabled: true`，覆盖回启用需确认字段名与语义
+未解除：
+
 4. **子进程能力是否受 install scripts 拦截影响**：5 个包的 install scripts 被 npm 拦截，其中 `dsh-subprocess-local` 的 `ensure-spawn-helper.mjs` 可能影响 bash 工具与 subagent
 
 已解除：
 
-- **peer 依赖版本范围**：实装统一为 `0.1.5-rc.1`，与源码 tag `dsh-v0.1.5-rc.1` 对齐。注意各子包 `latest` 标签可能与主版本不匹配，安装时必须显式指定版本
+1. **`ctx.settings.installSection()` 的完整签名** —— 源码核对解除（`packages/settings/settings/src/index.ts:472-505`）：`installSection(owner, ns, schema, entry, hooks)`，hooks 含 `setSource`/`onChange`（必需）与可选 `validate`；ns 必须匹配 `/^[a-z][a-z0-9-]*$/`
+2. ~~`llm-pi-ai` provider 行的确切配置字段形状~~ —— 尚未逐字确认，但已确认 `LlmAdapter` 抽象类真实形状：唯一必须实现的是 `stream()`，`resolveModel`（非 resolveModelInfo）、`prepareCall`、`listModels` 均有默认实现（`packages/llm/llm/src/index.ts:198-280`）。`llm-pi-ai` 的字段形状在第 3 期动模型目录时再核对
+3. **`disabled: false` 在 patch 中的确切写法** —— 源码核对解除（`vendor/include/src/index.ts:121-124,145-156`）：`disabled` 是 `PatchOptions` 的合法独立键，覆盖按字段写入目标行；第 0 期已实测 `--dump-config` 显示 `tool-web ... disabled: false`
+- **peer 依赖版本范围**：dsh 子包精确 `0.1.5-rc.1`；`@deepseek-ai/cordis ^4.0.2`（npm 无 0.1.5-rc.1）；`@deepseek-ai/schemastery ^3.18.1-rc.1`。各子包 `latest` 标签可能与主版本不匹配，安装时必须显式指定版本
 - **`--dump-config` 输出格式**：实测为 `# == <bundle>` 层标记 + YAML 行，每行含 `id` / `name` / `config` / `disabled`
-- **`dsh-web-fetch-http` 导出**：导出 `HttpFetchProvider` 类，可实例化复用
+- **`dsh-web-fetch-http` 导出**：导出 `HttpFetchProvider` 类，可实例化复用；构造签名 `(limits, resolveAddresses?)`，第二参数有默认值
 - **SSRF 语义版本差异**：`0.1.5-rc.1` 已实现"校验并固定公网 IP 目的地"，与旧版 `0.0.1-rc.5` 的"未实现"不同
 
 ## 6. 合规边界
