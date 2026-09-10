@@ -358,20 +358,16 @@ dsh 的 `llm-pi-ai` 行默认休眠（零路由），由 Settings → Models 页
 - [x] 验证：`dsh --profile web --dump-config` 出现 `# == dsh-kenari-plugin` 层
 - [x] 验证：`dsh --profile web` 启动无报错
 
-### ⬜ 第 1 期｜web fallback（核心价值）
+### ✅ 第 1 期｜web fallback（2026-09-10 代码完成，冒烟验证通过）
 
-- `src/web/search.ts`：`POST /v1/web/search`，`max_results = min(req.maxResults ?? 5, 10)`，`results[]` → `WebSearchSource { url, title, snippet: content }`，`content` 留空
-- `src/web/fetch.ts`：`POST /v1/web/fetch` → `WebFetchResult { url, statusCode: 200, body: {kind:'text', content}, truncated }`，`links[]` 附在正文尾部
-- `src/web/fallback.ts`：组合 provider，含回退日志（方向、失败原因、耗时）
-- 兜底实例：`DeepSeekSearchProvider` 与 `HttpFetchProvider`，**只实例化不注册**
-
-**验证**：
-
-1. patch 生效后 `tool-web` 的 `disabled` 为 `false`，`web_search` / `web_fetch` 工具注册可见
-2. 不配 `DEEPSEEK_API_KEY` → `web_search` 走 Kenari
-3. 配了 `DEEPSEEK_API_KEY` → 仍走 Kenari（Kenari 优先）
-4. 把 Kenari key 设为无效 → 观察回退到官方，日志有记录
-5. `fallbackEnabled: false` → 退回 dsh 默认（`deepseek-official` + `http`）
+- [x] `src/http.ts`：Kenari HTTP 客户端（超时/指数退避重试/key 现场解析/错误信封映射）
+- [x] `src/errors.ts`：信封解析 + 状态码分类
+- [x] `src/web/search.ts`：`max_results = min(req.maxResults ?? 5, 10)`，`results[] → WebSearchSource`，顶层 `content` 留空
+- [x] `src/web/fetch.ts`：→ `{url, statusCode: 200, body:{kind:'text'}}`，`links[]` 附正文尾部（≤20 条）
+- [x] `src/web/fallback.ts`：`KenariFirstSearch`/`KenariFirstFetch`，回退日志含方向/原因/耗时
+- [x] 兜底实例：`DeepSeekSearchProvider`（传 `resolveApiKey` thunk）与 `HttpFetchProvider`（只传 limits），只实例化不注册
+- [x] 验证：dump-config 钉层生效、启动无报错、mock 装配三路径、无效 key → 回退 + 日志
+- [ ] 真实计费验证（②③④场景）：待用户配 `KENARI_API_KEY`
 
 ### ⬜ 第 2 期｜REST 工具
 
