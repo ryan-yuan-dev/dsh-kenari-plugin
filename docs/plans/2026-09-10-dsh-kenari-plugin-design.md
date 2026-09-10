@@ -1,7 +1,7 @@
 # dsh-kenari-plugin 设计文档
 
 日期：2026-09-10
-状态：实施中 —— 第 0 期已完成并验证（2026-09-10，详见 `docs/handoff/003-*`）
+状态：实施中 —— 第 0 期已完成并验证（2026-09-10，详见 handoff 接力主文档）
 版本基线：dsh `0.1.5-rc.1`（源码 tag `dsh-v0.1.5-rc.1`）
 
 > 机制勘误（2026-09-10 源码核对后，详见 `docs/knowledge-base/dsh/dsh-source-verified.md`）：
