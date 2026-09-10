@@ -4,7 +4,7 @@
 
 `dsh-kenari-plugin` —— DeepSeek Harness（dsh）bundle 插件，让 Kenari（kenari.id）成为 dsh 的一等公民：模型可作会话模型、REST 能力成为 agent 工具、默认 web 不可用时回退到 Kenari。
 
-**当前状态：第 0 期（骨架与配置层）已完成并验证。** 骨架、patch 层、构建链已就绪并装进 web profile。
+**当前状态：第 0、1、2 期已完成并验证。** 骨架与 patch 层、web fallback（Kenari 优先 + 兜底）、20 个 `kenari_*` REST 工具均已就绪并装进 web profile。
 
 ## 最高纪律
 
@@ -16,7 +16,7 @@
 ## 目录
 
 | 目录 | 用途 |
-|---|---|
+| --- | --- |
 | `docs/knowledge-base/dsh/` | **dsh 自身**的技术事实：插件模型、web 缝、其他缝、vendor 源码实读。**改代码前先读，不要凭记忆推测接口** |
 | `docs/knowledge-base/kenari-plugin/` | **Kenari 侧**的技术事实：端点、鉴权、schema、计费 |
 | `docs/knowledge-base/plugin-rules.md` | 跨两者的开发规则：15 条硬约束 |
@@ -26,14 +26,11 @@
 
 **硬规则：交接文档文件名必须是 `NNN-yyyy-MM-dd-HHmmss-title.md`** —— `NNN` 三位序号从 `001` 递增，时间戳为创建时刻本地时区，`title` 为简短中文描述。新增时序号取当前最大值 +1。不要用 `README.md`。
 
-**维护规则：`001` 是计划主文档**（任务定义、已定决策、分期执行状态，全程有效、持续更新）；**序号最大的交接文档是接力主文档**（每期完成后重写，吸收上期仍有效的关键事实，自足可开工）；中间的历史交接被主文档合并后即删除，避免文档链膨胀。
-
 ## 必读顺序
 
-1. `docs/handoff/` 下序号最大的交接文档 —— 状态、决策、下一步、未确认项（当前为 `002-…-接力主文档.md`，合并了各阶段的活动上下文，自足可开工）
-2. `docs/knowledge-base/plugin-rules.md` —— 15 条硬约束，**动手前必读**
-3. `docs/plans/2026-09-10-dsh-kenari-plugin-design.md` —— 完整设计与分期实施
-4. 按任务选读知识库（dsh 侧与 Kenari 侧已分目录）：
+1. `docs/knowledge-base/plugin-rules.md` —— 15 条硬约束，**动手前必读**
+2. `docs/plans/2026-09-10-dsh-kenari-plugin-design.md` —— 完整设计与分期实施
+3. 按任务选读知识库（dsh 侧与 Kenari 侧已分目录）：
    - `docs/knowledge-base/dsh/dsh-source-verified.md`（**权威性最高**，patch 语义 / seam 签名 / 依赖定版）
    - `docs/knowledge-base/dsh/dsh-web-seam.md`（web fallback）、`docs/knowledge-base/dsh/dsh-plugin-model.md`（骨架/打包）、`docs/knowledge-base/dsh/dsh-other-seams.md`（llm/settings/credentials）
    - `docs/knowledge-base/kenari-plugin/kenari-api.md`（端点/schema）
@@ -51,7 +48,7 @@
 ## 环境
 
 | 项 | 值 |
-|---|---|
+| --- | --- |
 | dsh | `0.1.5-rc.1`，全局安装（`dsh` 在 PATH） |
 | 源码 | `vendor/deepseek-harness` submodule，tag `dsh-v0.1.5-rc.1` |
 | 包管理 | pnpm `12.3.4`（`dsh plugin` 转发给它，必需） |
@@ -71,9 +68,3 @@ dsh --profile web --dump-config                # 验证层生效
 dsh plugin --profile web remove <pkg>          # 卸载
 dsh --profile web                              # 启动（默认端口 3080）
 ```
-
-第 0 期验证标准已达成：`--dump-config` 出现 `# == dsh-kenari-plugin` 层，`dsh --profile web` 启动无报错。
-
-## 下一步
-
-第 1 期：web fallback（Kenari HTTP 客户端 + search/fetch/fallback provider）。任务包见 `docs/handoff/` 下接力主文档（当前为 `002-*`）第 4 节。
