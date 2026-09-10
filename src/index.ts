@@ -21,7 +21,8 @@ import type { ToolsDeps } from './tools/shared.js'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { KenariCatalog } from './catalog.js'
 import { BalanceMonitor, BillingLedger } from './billing.js'
-import { installKenariSettings } from './settings.js'
+import { installKenariSettings, KENARI_SETTINGS_NAMESPACE } from './settings.js'
+import { KenariLlmAdapter } from './llm/adapter.js'
 import { registerDocsTools } from './tools/docs.js'
 import { registerAccountTools } from './tools/account.js'
 import { registerXSearchTool } from './tools/x-search.js'
@@ -205,5 +206,32 @@ export function apply(ctx: Context, config: Config): void {
     logger?.info('kenari: web providers, REST tools, catalog and billing ledger registered')
   } else {
     logger?.info('kenari: web providers registered (tools disabled by config)')
+  }
+
+  // 第 5 期（可选）：自带 LlmAdapter。默认关闭，且路由名与 llm-pi-ai 预设不同，
+  // 所以两条路可以并存、可以回退；开启后模型的 usage 与费用也进同一本账。
+  if (config.nativeAdapterEnabled === true) {
+    const providerId = config.nativeProviderId ?? 'kenari-direct'
+    const adapter = new KenariLlmAdapter(
+      { http: deps, catalog, billing, logger },
+      (imageRef) => {
+        const attachments = ctx.get('attachments')
+        if (attachments === undefined) return Promise.reject(new Error('本部署没有 attachment 存储，无法回传图像'))
+        return attachments.readImage(imageRef)
+      },
+    )
+    // llm 是可选 seam：没挂载时不注册，插件其余能力照常工作
+    ctx.inject(['llm'], (llmCtx) => {
+      llmCtx.llm.registerAdapter([providerId], adapter)
+      // 设置卡片与 Models 页的「拉取模型」走这里（本插件命名空间下的发现）
+      llmCtx.llm.registerModelDiscovery(KENARI_SETTINGS_NAMESPACE, async () =>
+        (await catalog.chatModels()).map((model) => ({
+          id: model.id,
+          ...(model.name === undefined ? {} : { name: model.name }),
+          ...(typeof model.context_length === 'number' ? { contextWindow: model.context_length } : {}),
+        })),
+      )
+      logger?.info(`kenari: native LlmAdapter registered for route "${providerId}"`)
+    })
   }
 }

@@ -422,7 +422,7 @@ key 状态复用 `credentials.describe()` 的 configured / source / writable—�
 
 **验证**（2026-09-10 浏览器实测）：Settings 导航出现 **Kenari** 分区；卡片渲染无 `data-slot-error`；凭据行显示「KENARI_API_KEY / 已配置 / 来源 user-env」，全程无明文；模型目录 76 条。踩到的两个坑已固化进构建门槛：服务名写成 Host 侧的 `credentialsController`（应为 `remote.credentials`）会在页面报 `pending (waiting for service: …)`；组件里引用未定义变量会静默渲染成空面板。
 
-### ⬜ 第 5 期｜专属 LlmAdapter（可选增强，未做）
+### ✅ 第 5 期｜专属 LlmAdapter（2026-09-10 完成并验证，默认关闭）
 
 继承 `LlmAdapter` 实现 `stream()`，用 `ctx.llm.registerAdapter(['kenari'], adapter)` 注册。
 
@@ -434,7 +434,28 @@ key 状态复用 `credentials.describe()` 的 configured / source / writable—�
 
 **验证**：对比 `llm-pi-ai` 与自写 adapter 在同一模型上的差异；确认 `annotations` 与 `file-parser` 生效。
 
-**2026-09-10 决定：不做。** 第 3 期的 `llm-pi-ai` 预设已经把「Kenari 模型当会话模型」交付并实测通过，第 5 期只是补 `file-parser` 注入、`web_search_options`、`annotations` 这些字段级增强。已知代价：`cached_tokens` 命中率缺少数据源——chat usage 走 pi-ai，本插件的账本看不到，所以 `kenari_billing` 的命中率行目前只在自写 adapter 记录过 usage 时才有数。
+**实现口径**（`src/llm/adapter.ts`，`nativeAdapterEnabled` 默认 `false`）：
+
+- **路由名与预设不同**（默认 `kenari-direct`），所以预设路由与原生路由可以并存、可以回退
+- `stream()` 走 [OI] 线 SSE：`reasoning_content` → `reasoning-delta`（思考通道与可见文本分开），
+  `content` → `text-delta`，`delta.tool_calls[]` 分片重组 → `tool-call-delta` + 组装好的 `block-end`，
+  usage 帧 → `usage` chunk，`finish_reason` → `finish`
+- **usage 进共享账本**（会话作用域）：这就是 `cached_tokens` 命中率的数据源。dsh 要求各项**互斥**，
+  所以 `inputTokens = prompt_tokens - cached_tokens`、`cacheReadTokens = cached_tokens`
+- 免费模型不记费用；付费模型按目录 `pricing` 换算预估（缓存读用 `cache_read` 单价，缺失才退回输入价）
+- `listModels()` 直接来自目录，价格/上下文/视觉/推理档位写进 `description`；`resolveModel()` 给上下文与推理档位
+- 同时 `registerModelDiscovery('kenari', …)`，设置卡片与 Models 页的「拉取模型」对原生路由也有效
+
+**已知不做的三件**：不回放思考块；不注入 `file-parser`（文件块投影成说明文本，读文档用 `kenari_ocr`）；
+不映射 `web_search_options`（dsh 的 `GenerateOptions` 没有对应字段）。都写在 README 里。
+
+**验证**（2026-09-10）：
+- `test/llm-adapter.mjs` 对本地假网关 25/25 通过：请求体（stream / stream_options / max_tokens /
+  reasoning_effort / tools / attribution user-agent）、消息映射（system 串、assistant 的 tool_calls 回放、
+  tool 结果 → `role:tool` + `tool_call_id`）、分片工具调用重组、usage 互斥口径、
+  401 → `AUTH`、空响应 → `EMPTY_RESPONSE`、付费模型预估 220 micro-IDR（输入 120 + 缓存读 20 + 输出 80）
+- headless 真实会话 3 轮工具调用通过，session 记录 `provider: kenari-direct`，
+  `kenari_billing` 显示 token 计量与 **48.2% 缓存命中率**（这正是第 3 期缺的数据源）
 
 ### ✅ 第 6 期｜打包与文档（2026-09-10 完成并验证）
 

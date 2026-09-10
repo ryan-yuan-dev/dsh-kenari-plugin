@@ -103,6 +103,28 @@ Kenari 同时提供三条线，**base URL 形状不同，写错返回 405 而不
 
 **已知的模型侧空缺**（不是工具问题）：公开目录当前没有 music 与 moderation 模型，所以 `kenari_music` / `kenari_moderate` 只会返回 400；`kenari_speech` 用 `mimo-v2-5-tts` 可用，`kokoro-tts` 与 `gemini-3-1-flash-tts` 是上游 400。
 
+## 可选：插件自带的 LlmAdapter
+
+第 3 期的 `llm-pi-ai` 预设已经能把 Kenari 当会话模型用。若还想要：
+
+- **模型选择器里直接看到价格**（`入 420 / 出 24000 IDR per 1M tokens · ctx 262144 · 视觉 · 推理 low/medium/high`）
+- **会话 token 计量与 `cached_tokens` 命中率进 `kenari_billing`**（预设路由下这个数据源看不到）
+- 推理档位按目录原样暴露（含 `none`，不需要 off/none 键位翻译）
+
+就把 `nativeAdapterEnabled` 设为 `true`（需重启）。它注册的路由默认叫 `kenari-direct`，与预设的 `kenari`
+不同名，所以两条路可以并存：想回退把开关关掉即可。
+
+```yaml
+- id: kenari
+  config:
+    nativeAdapterEnabled: true
+    nativeProviderId: kenari-direct
+```
+
+**不做的事**（与预设路由的能力差异）：不回放思考块、不注入 `file-parser`（文件块投影成说明文本，
+读文档请用 `kenari_ocr`）、不映射 `web_search_options`。图像输入是支持的（经 `ctx.attachments.readImage`
+读回字节、转 data URI 发送）。
+
 ## 故障排查
 
 | 症状 | 原因与处置 |
@@ -151,6 +173,7 @@ dsh plugin --profile web remove dsh-kenari-plugin
 ```sh
 pnpm build                      # tsc → lib/ + 客户端 bundle 自检
 node test/real-harness.mjs      # 真实 dsh harness（ToolRuntime + attachment-local + 真 key）
+node test/llm-adapter.mjs       # 本地假网关：适配器请求体/分片重组/usage/失败分类（不联网、不花钱）
 node test/billed-media.mjs      # 会真花钱：TTS + STT 并校准预估（约 Rp 500/次）
 KENARI_ALLOW_VIDEO=1 node test/billed-video.mjs   # 会真花钱：生成并下载 4s 视频（约 Rp 1.400）
 ```
