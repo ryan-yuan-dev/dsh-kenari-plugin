@@ -181,6 +181,45 @@ const usage = hitLedger.usageTotals('s')
 check('cached_tokens hit rate is cacheRead / (input + cacheRead)', usage.hitRate === 0.5, `hitRate=${usage.hitRate}`)
 check('no cache data means no hit rate rather than 0%', new BillingLedger().usageTotals('s').hitRate === undefined)
 
+// ------------------------------------------- pure unit: per-unit rounding
+// Measured against the live gateway: 21 characters of TTS billed one whole
+// 1k-char unit (Rp 250), not 0.021 units — an estimate that skips this is off
+// by more than an order of magnitude.
+const { billedUnits } = await import('../lib/tools/shared.js')
+const charUnits = billedUnits(21 / 1000, '1k_chars')
+check('sub-unit per-unit quantities round up to one whole unit', charUnits.units === 1 && charUnits.roundedUp === true, `units=${charUnits.units}`)
+check('whole per-unit quantities stay put', billedUnits(4, 'second').units === 4 && billedUnits(4, 'second').roundedUp === false)
+check('partial per-unit quantities round up', billedUnits(6.5, 'second').units === 7)
+check('token-unit quantities stay fractional (per-token pricing)', billedUnits(0.000021, 'token_1m').units === 0.000021 && billedUnits(0.000021, 'token_1m').roundedUp === false)
+
+// ------------------------------------- web fallback ④: invalid Kenari key
+// The one fallback path a mock cannot prove: a real request to the real host
+// that really fails auth, then really falls back. The fallback provider is a
+// sentinel because the official route's own credential is not this test's
+// business (that path is covered by the phase-1 checks).
+const { KenariSearchProvider } = await import('../lib/web/search.js')
+const { KenariFirstSearch } = await import('../lib/web/fallback.js')
+const warnings = []
+const invalidDeps = {
+  config: { baseURL: 'https://kenari.id', timeoutMs: 15_000, maxRetries: 0 },
+  resolveApiKey: async () => 'kn-invalid-key-for-fallback-test',
+  logger: { warn: (msg) => warnings.push(msg), info: () => {} },
+}
+const sentinel = {
+  id: 'deepseek-official',
+  available: () => true,
+  search: async (request) => ({ sources: [{ url: 'https://sentinel.invalid/', title: `fallback:${request.query}` }], truncated: false }),
+}
+const composed = new KenariFirstSearch(new KenariSearchProvider(invalidDeps), sentinel, invalidDeps.logger)
+let fallbackSources
+try {
+  fallbackSources = (await composed.search({ query: 'fallback probe', maxResults: 3 })).sources
+} catch (err) {
+  fallbackSources = [{ url: `threw:${String(err).slice(0, 60)}` }]
+}
+check('invalid Kenari key falls back to the composed provider', fallbackSources[0]?.url === 'https://sentinel.invalid/', fallbackSources[0]?.url)
+check('fallback logs direction, reason and elapsed time', warnings.some((line) => line.includes('kenari-fallback') && line.includes('回退') && line.includes('ms')), warnings[0]?.slice(0, 90))
+
 const failed = results.filter((row) => !row.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 if (failed.length > 0) {

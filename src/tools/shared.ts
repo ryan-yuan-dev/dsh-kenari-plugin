@@ -123,6 +123,20 @@ export async function billSpend(
 }
 
 /**
+ * 非 token 单位按整单位上取。
+ *
+ * 实测（2026-09-10，mimo-v2-5-tts）：21 字符的 TTS 输入按 1 个「1k 字符」单位计费
+ * Rp 250，而非 0.021 单位。所以 `image`/`second`/`1k_chars`/`song`/`request`/
+ * `megapixel` 这类按件单位都要向上取整，否则预估会低一到两个数量级。
+ * `token_1m` 是按 token 线性计价，保留小数才是正确口径。
+ */
+export function billedUnits(units: number, unit: string | undefined): { units: number; roundedUp: boolean } {
+  if (unit === 'token_1m') return { units, roundedUp: false }
+  const whole = Math.ceil(units)
+  return { units: whole, roundedUp: whole !== units }
+}
+
+/**
  * 按目录计价行预估一次调用：`units` 必须以该行的计费单位表达
  * （图像=张、视频=秒、语音=千字符、token 类=百万 token）。
  * 找不到模型或该端点单价时返回空预估（不阻断调用）。
@@ -140,11 +154,18 @@ export async function estimateByUnit(
     const line = priceLineOf(resolved.model, endpoint, variant)
     if (line?.micro_idr === undefined) return { model: resolved.model }
     const label = unitLabel(line.unit)
-    const rendered = Number.isInteger(units) ? String(units) : units.toFixed(6)
+    const billed = billedUnits(units, line.unit)
+    const unitPrice = line.micro_idr
+    const parts = [
+      `${Number.isInteger(billed.units) ? billed.units : billed.units.toFixed(6)} ${label}`,
+      `× Rp ${(unitPrice / 1_000_000).toLocaleString('id-ID')}`,
+    ]
+    if (billed.roundedUp) parts.push(`（不足一单位按一单位计，输入量 ${units.toFixed(6)}）`)
+    if (variant !== undefined) parts.push(`@ ${variant}`)
     return {
       model: resolved.model,
-      microIdr: Math.round(line.micro_idr * units),
-      note: `${rendered} ${label} × Rp ${((line.micro_idr ?? 0) / 1_000_000).toLocaleString('id-ID')}${variant === undefined ? '' : ` @ ${variant}`}`,
+      microIdr: Math.round(unitPrice * billed.units),
+      note: parts.join(' '),
     }
   } catch {
     // 目录不可用时预估失效，调用本身继续
