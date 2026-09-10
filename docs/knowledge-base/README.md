@@ -4,22 +4,35 @@
 
 **不写入**：过程记录、推理结论、项目决策、待办事项。这三类分别属于 `docs/plans/`、`docs/handoff/`（命名 `NNN-yyyy-MM-dd-HHmmss-title.md`）与 `AGENTS.md`。
 
-## 文档
+## 目录结构
+
+| 子目录 | 内容 |
+|---|---|
+| [dsh/](dsh/) | **dsh 自身**的机制事实：插件模型、web 缝、其他缝、vendor 源码实读 |
+| [kenari-plugin/](kenari-plugin/) | **Kenari 侧**的事实：端点、鉴权、schema、计费 |
+| [plugin-rules.md](plugin-rules.md)（顶层） | 跨两者的开发规则：13 条硬约束，违反会导致明确失败模式 |
+
+## dsh/ — dsh 自身
 
 | 文档 | 内容 |
 |---|---|
-| [plugin-rules.md](plugin-rules.md) | 开发规则与约束（12 条，必须遵守） |
-| [dsh-plugin-model.md](dsh-plugin-model.md) | dsh 插件模型：模块形态、配置、打包、层序、安装 |
-| [dsh-web-seam.md](dsh-web-seam.md) | web 能力缝：provider 接口、选择语义、dsh-base 默认配置 |
-| [dsh-other-seams.md](dsh-other-seams.md) | llm / settings / credentials / tools / MCP 客户端接口 |
-| [dsh-source-verified.md](dsh-source-verified.md) | vendor 源码实读：patch 语义、模块加载、seam 签名、依赖包名（权威性最高） |
-| [kenari-api.md](kenari-api.md) | Kenari 端点、鉴权、schema、计费 |
+| [plugin-rules.md](plugin-rules.md) | 开发规则与约束（13 条，必须遵守） |
+| [dsh/dsh-plugin-model.md](dsh/dsh-plugin-model.md) | dsh 插件模型：模块形态、配置、打包、层序、安装 |
+| [dsh/dsh-web-seam.md](dsh/dsh-web-seam.md) | web 能力缝：provider 接口、选择语义、dsh-base 默认配置 |
+| [dsh/dsh-other-seams.md](dsh/dsh-other-seams.md) | llm / settings / credentials / tools / MCP 客户端接口 |
+| [dsh/dsh-source-verified.md](dsh/dsh-source-verified.md) | vendor 源码实读：patch 语义、模块加载、seam 签名、依赖包名（权威性最高） |
+
+## kenari-plugin/ — Kenari 侧
+
+| 文档 | 内容 |
+|---|---|
+| [kenari-plugin/kenari-api.md](kenari-plugin/kenari-api.md) | Kenari 端点、鉴权、schema、计费 |
 
 ## 来源与优先级
 
 **权威性从高到低**：
 
-1. `vendor/deepseek-harness` submodule 源码（`dsh-source-verified.md`）—— 实现即真相
+1. `vendor/deepseek-harness` submodule 源码（`dsh/dsh-source-verified.md`）—— 实现即真相
 2. npm 包的 `.d.ts` 与 `cordis.patch.yml` —— 实现即真相，**优先于文档**
 3. 官方文档站 `https://deepseek-harness.github.io/deepseek-harness/en/` 的 develop / reference 章节
 4. `https://kenari.id/openapi.json`（OpenAPI 3.1 spec）
@@ -33,7 +46,7 @@ Kenari 的 MCP 配置与传输类型在 `https://kenari.id/en/docs/tools`。
 
 ## 版本锚点
 
-每条事实标注其验证所依据的包版本。dsh 的 rc 线之间行为有差异（见 `dsh-web-seam.md` 的 SSRF 与 fetch 默认值说明），脱离版本引用会出错。
+每条事实标注其验证所依据的包版本。dsh 的 rc 线之间行为有差异（见 `dsh/dsh-web-seam.md` 的 SSRF 与 fetch 默认值说明），脱离版本引用会出错。
 
 本库核实于 2026-09-10，依据版本 **`0.1.5-rc.1`**（实装于 `~/.dsh`，全局安装于 `/opt/homebrew/lib/node_modules/@deepseek-ai/dsh`）：
 

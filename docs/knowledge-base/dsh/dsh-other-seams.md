@@ -192,4 +192,4 @@ stdio 桥接会**刻意移除**名字像凭据的环境变量与所有 `DSH_*` �
 
 ## 客户端半边（设置卡片）
 
-见 `dsh-plugin-model.md` 的"客户端模块"一节。要点：一个包两个半边，Host 在 `src/`、浏览器在 `src/client/`，导出 `./client`，package.json 声明 `dsh.client`。
+见 `dsh-plugin-model.md`（同目录）的"客户端模块"一节。要点：一个包两个半边，Host 在 `src/`、浏览器在 `src/client/`，导出 `./client`，package.json 声明 `dsh.client`。
