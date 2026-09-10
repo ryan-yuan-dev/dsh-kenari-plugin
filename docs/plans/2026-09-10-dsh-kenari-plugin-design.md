@@ -1,7 +1,7 @@
 # dsh-kenari-plugin 设计文档
 
 日期：2026-09-10
-状态：实施中 —— 第 0 期已完成并验证（2026-09-10，详见 handoff 接力主文档）
+状态：第 0–4、6 期已完成并验证（2026-09-10）；第 5 期为可选增强，未做。实测记录见本文末「实施补充」
 版本基线：dsh `0.1.5-rc.1`（源码 tag `dsh-v0.1.5-rc.1`）
 
 > 机制勘误（2026-09-10 源码核对后，详见 `docs/knowledge-base/dsh/dsh-source-verified.md`）：
@@ -383,7 +383,7 @@ dsh 的 `llm-pi-ai` 行默认休眠（零路由），由 Settings → Models 页
 - [x] 统一：超时（生成类 `generationTimeoutMs`）、重试（生成类超时不重试，防重复扣费）、错误映射、成本回显
 - [x] 验证：真实 key 下逐工具调用；`reuse_id` 二次免费；handles 同传报参数错；真实 harness（dsh ToolRuntime + LocalAttachmentStore）派发与图像落盘通过
 
-### ⬜ 第 3 期｜目录、计费与上下文
+### ✅ 第 3 期｜目录、计费与上下文（2026-09-10 完成并验证）
 
 - `catalog.ts`：`GET /v1/models` 同步 + TTL 缓存，映射：
   - `id` → dsh 模型 id
@@ -400,19 +400,29 @@ dsh 的 `llm-pi-ai` 行默认休眠（零路由），由 Settings → Models 页
 - 上下文：`count_tokens` 接入 token 计量；`cached_tokens` 命中率
 - 新账户默认 `step-3-7-flash:free`
 
-**验证**：Rp 0 账户下默认选中免费模型；余额告警触发；402 时提示切免费模型或充值。
+**验证**（2026-09-10 实测）：`test/real-harness.mjs` 33 项全绿（真实 dsh ToolRuntime + attachment-local + 真 key）；余额告警在阈值调高时触发（余额 Rp 245.103 < 阈值）；402 文案含「改用免费模型 / 充值」；
+模型驱动工具调用实测通过：headless profile + Kenari 预设，session 记录 `provider: kenari` / `model: step-3-7-flash:free`，两次 `tool/call` 成功。
 
-### ⬜ 第 4 期｜设置界面
+**落地差异（实现时定的三个口径）**：
+1. **模型接入走 patch 预设，不写用户 settings.yaml**：在 `cordis.patch.yml` 里给 `llm-pi-ai` 加 `providers.kenari`，用户层按 route 合并，所以不覆盖用户自己的选择；预设**只放 11 个免费模型**（Rp 0 账户开箱可用），付费模型由用户在 Models 页加。
+2. **不覆盖 `agent-default-model`**：dsh 默认模型来自 base（`deepseek-official/deepseek-flash`），把它改成 Kenari 会让没有 Kenari key 的部署每次会话都鉴权失败。**预设与设置卡片把 `step-3-7-flash:free` 标为推荐首选**，默认模型仍由用户决定。
+3. **成本预估按整单位上取**：实测 21 字符 TTS 计 1 个完整「1k 字符」单位（Rp 250），不是 0.021 单位；4s 360p 视频预估 Rp 1.400 == 实际扣费 Rp 1.400。`token_1m` 例外，保留小数。
+
+### ✅ 第 4 期｜设置界面（2026-09-10 完成并验证）
 
 Host 半边用 `ctx.settings.installSection(ctx, NS, Config, config, { validate })` 注册 namespace，Client 半边在 `src/client/` 导出 `./client`，`package.json` 声明 `dsh.client`。
 
-卡片：余额、模型目录与价格表、计费统计、key 状态、连通性自检。
+卡片实际内容：凭据状态（引用名 + configured/source/writable）、可编辑的运行参数、加载期开关、模型目录。
 
-key 状态复用 `describe()` 的 configured / source / writable。**环境变量来源的引用必须渲染为只读**，否则写操作会假装成功但解析仍返回旧值。
+key 状态复用 `credentials.describe()` 的 configured / source / writable——该接口**没有承载值的字段**，所以「只显示状态」是接口保证而非 UI 自觉。进程环境提供的引用报告 `writable: false`，卡片据此渲染为「凭据层只读」；`.env` 文件（`user-env` 层）可写则显示「可写」，如实反映 seam 语义。
 
-**验证**：设置页出现卡片；key 只显示状态不显示明文；env 提供的 key 显示只读。
+**与原计划的偏差**：余额、计费统计、实时价格表**没有进卡片**。它们只存在于 Host 侧端点，而 dsh 没有对应的 Remote 命名空间；补一个需要新增 Host API 包（改 dsh），与红线冲突。卡片改为列出这些数据对应的工具（`kenari_billing` / `kenari_balance` / `kenari_list_models` / `kenari_count_tokens`），并说明原因——不显示会过期的数字。模型目录这一项通过既有的 `remote.llm.discoverModels` 拿到了真实数据（76 个模型）。
 
-### ⬜ 第 5 期｜专属 LlmAdapter（可选增强）
+**客户端 bundle 形态**：本包只有 `tsc`，没有打包器，所以 `client/index.js` 以 loader 的 factory 格式**手写**（只 require baseline 的 `react`）。`scripts/check-client.mjs` 随 `pnpm build` 运行：校验注册格式、导出面、模块依赖声明、NS 与 Host 一致，并**真实渲染一次卡片组件**——手写 bundle 的编译期检查就是它。
+
+**验证**（2026-09-10 浏览器实测）：Settings 导航出现 **Kenari** 分区；卡片渲染无 `data-slot-error`；凭据行显示「KENARI_API_KEY / 已配置 / 来源 user-env」，全程无明文；模型目录 76 条。踩到的两个坑已固化进构建门槛：服务名写成 Host 侧的 `credentialsController`（应为 `remote.credentials`）会在页面报 `pending (waiting for service: …)`；组件里引用未定义变量会静默渲染成空面板。
+
+### ⬜ 第 5 期｜专属 LlmAdapter（可选增强，未做）
 
 继承 `LlmAdapter` 实现 `stream()`，用 `ctx.llm.registerAdapter(['kenari'], adapter)` 注册。
 
@@ -424,11 +434,15 @@ key 状态复用 `describe()` 的 configured / source / writable。**环境变�
 
 **验证**：对比 `llm-pi-ai` 与自写 adapter 在同一模型上的差异；确认 `annotations` 与 `file-parser` 生效。
 
-### ⬜ 第 6 期｜打包与文档
+**2026-09-10 决定：不做。** 第 3 期的 `llm-pi-ai` 预设已经把「Kenari 模型当会话模型」交付并实测通过，第 5 期只是补 `file-parser` 注入、`web_search_options`、`annotations` 这些字段级增强。已知代价：`cached_tokens` 命中率缺少数据源——chat usage 走 pi-ai，本插件的账本看不到，所以 `kenari_billing` 的命中率行目前只在自写 adapter 记录过 usage 时才有数。
+
+### ✅ 第 6 期｜打包与文档（2026-09-10 完成并验证）
 
 README 内容：安装、key 获取、三协议选择与 base URL 区别、fallback 说明、兼容预设、故障排查（401 / 402 / 405 三个高频错误）、MCP 可选方案、卸载。
 
 全流程演练安装与卸载，确认卸载后无残留注册。
+
+**验证**（2026-09-10 实测）：`dsh plugin --profile web remove dsh-kenari-plugin` → profile 的 `package.json` 里依赖与 bundle 条目消失，`--dump-config` 中本插件相关行归零，`web` 行回到 base 默认（`deepseek-official` / `http`），`tool-web` 回到 `disabled: true`，`llm-pi-ai` 回到无 config；`dsh plugin --profile web add ./` 后逐项复原，启动无报错。安装时 pnpm 报的 peer 警告来自 dsh 自己的 `dsh-web-fetch-http`（缺 cordis / dsh-web 等 peer），与本插件无关。
 
 ## 5. 实施前需确认的未知项
 

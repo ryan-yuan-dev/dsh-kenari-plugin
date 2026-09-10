@@ -493,3 +493,68 @@ Content-Type: application/json
 - 401 的响应体是**纯文本 `invalid key`**（不是 JSON），解析时不能假设 JSON
 - 400 的 body 是 `{"error":{"code":"invalid_request_error","message":"...","param":null,"type":"..."}}`
 - `duration` 之类的非法取值报 400 并**列出可选值**，是很好的引导信息
+
+---
+
+# 第 3 期实测补充（2026-09-10）
+
+## 计费口径：非 token 单位按**整单位上取**
+
+用余额差额实测（`test/billed-media.mjs` / `test/billed-video.mjs`）：
+
+| 调用 | 我们的预估 | 实际扣费 |
+| --- | --- | --- |
+| `mimo-v2-5-tts`，输入 21 字符 | 0.021 单位 → Rp 5.25（**错**） | **Rp 250** = 1 个完整「1k 字符」单位 |
+| `gemini-omni-flash`，4 秒 360p | Rp 1.400 | **Rp 1.400** |
+
+结论：`image` / `second` / `1k_chars` / `song` / `request` / `megapixel` 这类按件单位要 `Math.ceil`，
+不足一单位按一单位计。`token_1m` 是按 token 线性计价，保留小数才对。
+
+钱包余额是整 Rupiah，所以亚 Rupiah 的扣费在余额上看不到（STT 1 秒量级实测显示扣 Rp 0-1），
+这不代表免费。测量小额费用时要把多次调用累加再算差额。
+
+## TTS 上游故障是**模型级**，不是端点级
+
+| 模型 | 结果 |
+| --- | --- |
+| `mimo-v2-5-tts` | ✅ HTTP 200，`audio/mpeg`，用法与其他 [OI] 端点一致 |
+| `kokoro-tts` | ❌ 400 `the model's provider rejected this request`（最小请求体也一样） |
+| `gemini-3-1-flash-tts` | ❌ 同上 |
+
+第 2 期记录「TTS 全挂」不准确：换模型即可用。选 TTS 模型前先看目录里的 `voices` / `formats` 字段。
+
+`whisper-large-v3-turbo`（`audio_transcription`）可用，`verbose_json` 返回文本与耗时。
+
+## `GET /v1/models` 的字段实测取值
+
+- `endpoints` 实际值：`chat`、`images`、`videos`、`audio_speech`、`audio_transcription`、
+  `embeddings`、`rerank`（后两个只在 `?modality=` 目录里出现）。**没有 `messages` / `responses` 这类协议名**，
+  所以「能不能当会话模型」用 `endpoints.includes('chat')` 判断
+- `modalities.input` 实际值：`text` / `image` / `audio` / `video` / `pdf`；`output`：`text` / `image` / `audio` / `video`
+- `pricing.unit` 恒为 `micro_idr_per_1m_tokens`；`pricing_lines[].unit` 实测值为
+  `token_1m` / `image` / `second` / `1k_chars`
+- 默认目录 76 个模型（61 个 `chat`，13 个免费）；文档页说 `text`/`moderation` 类模型当前不存在
+- `reasoning_options` 里出现过 `none`（如 `hy3:free`、`mistral-medium-3-5:free`）——
+  线上接受 `reasoning_effort: "none"`，但 **dsh 的 `reasoningEfforts` 键不接受 `none`**，
+  映射时写成 `off: none`（键是 dsh 的，值是线上的）
+
+## 免费模型清单（2026-09-10）
+
+`step-3-7-flash:free`（262k，tools，视觉，reasoning low/medium/high，推荐）、
+`glm-4-7-flash:free`（131k）、`hy3:free`（262k）、`laguna-s-2-1:free` / `laguna-xs-2-1:free`（262k）、
+`mimo-v2-5:free`（1.05M）、`mistral-medium-3-5:free`（262k，视觉）、
+`muse-spark-1-2-contributor:free` / `muse-spark-1-3-contributor:free`（1M，视觉）、
+`nemotron-3-super-120b-a12b:free`（262k）、`nemotron-3-ultra-550b-a55b:free`（1M）、
+`agnes-2-0-flash:free` / `agnes-2-5-flash:free`（**无 `tool_call`，不能做 agent**）。
+
+## [OI] 网关的宽容度（免费模型实测，零成本）
+
+| 请求特征 | 结果 |
+| --- | --- |
+| `max_tokens` | ✅ 生效 |
+| `max_completion_tokens` | ⚠️ **HTTP 200 但被静默忽略**（输出上限失效） |
+| `store: false` / `developer` 角色 / `stream_options.include_usage` / `reasoning_effort` | ✅ 全部接受（`additionalProperties: true`） |
+| 流式 | 最后一帧带 `usage`，含 `prompt_tokens_details.cached_tokens` |
+| 工具 | `tools` + `tool_choice` 正常，`finish_reason: tool_calls` |
+
+`cached_tokens` 只在非流式与流式 usage 帧里出现，是命中率的唯一来源。

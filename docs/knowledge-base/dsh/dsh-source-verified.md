@@ -282,3 +282,142 @@ resolveApiKey: async () => {
 ## 12. 设置客户端半边（第 4 期用，摘要）
 
 客户端模块 = `src/client/index.ts` 导出 `apply(ctx: ClientContext)` + `inject` + `NS`；package.json `dsh.client: { platform: 'web', inject: [], immediately: true }`，exports 加 `"./client"`。示例：`packages/client/ui-settings-plugin-inventory/src/client/index.ts`。设置卡片通过 `ctx.slots.inject('settings.<section>', ...)` 挂载。
+
+---
+
+## 13. `ctx.llm` / `llm-pi-ai` 配置形状（第 3 期实读 + 实测）
+
+包 `@deepseek-ai/dsh-llm-pi-ai`，types 在 `lib/types/config.d.ts`、`catalog.d.ts`、`provider.d.ts`。
+
+```ts
+interface Config { providers?: Record<string, PiAiProviderProfile> }
+
+interface PiAiProviderProfile {
+  apiKeyEnv?: string        // 凭据引用名，逐请求经 ctx.credentials 解析
+  displayName?: string
+  api?: string              // 线上协议；路由不在 pi-ai 目录里时**必须**写
+  baseURL?: string
+  models?: PiAiModelProfile[]        // 显式列表会**替换**安装目录
+  modelOverrides?: Record<string, PiAiModelOverride>  // 只改指定 id，其余保持
+  compat?: PiAiCompatProfile
+  defaultContextWindow?: number      // 默认 262144
+  defaultMaxTokens?: number          // 默认 32768
+  defaultInput?: PiAiModality[]      // 默认 [text]；**不可为空**
+  reasoning?: ModelThinkingLevel
+  transport?: Transport
+  retryPolicy?: RetryPolicyConfig
+}
+
+interface PiAiModelProfile {
+  id: string                // 必填
+  name? / contextWindow? / maxTokens?
+  input?: PiAiModality[]
+  reasoningEfforts?: false | Partial<Record<ModelThinkingLevel, string | null>>
+  compat?: PiAiCompatProfile
+}
+```
+
+要点（源码事实）：
+
+- **profile 按 provider route 合并**：composition base 与用户 settings 层"merge per provider"，
+  route 集合是结构性的 → 插件可以在 patch 里给 `llm-pi-ai` 预置 `providers.kenari`，用户层仍可加自己的路由
+- `ReasoningEffort` 的**键**受 `ModelThinkingLevel` 限制：
+  `off | minimal | low | medium | high | xhigh | max`。写别的键 → schemastery 校验失败 →
+  **整个 plugin tree 加载失败、dsh 起不来**。`off` 可以留空值表示"支持但不发参数"
+- **每个 provider HTTP 请求必须带 `attributionHeaders()`**（契约）
+- `buildProvider`：路由不在 pi-ai 目录里（或改了协议）→ 用 `createProvider` 按协议表构造；
+  命名目录路由则复用目录 provider（Bedrock 之类有私有实现）
+- `supportedProtocols()` 实测值：`openai-completions` / `openai-responses` / `anthropic-messages`
+  / `azure-openai-responses` / `openai-codex-responses` / `bedrock-converse-stream`
+- `maxTokens` 写在 model entry 上会同时成为**该模型的每请求默认上限**；
+  只写 `defaultMaxTokens` 则只是"能力"、不会变成请求默认值 —— 不确定网关真实上限时不要写 model 级 `maxTokens`
+
+### 模型发现（设置页"拉取模型"用的就是它）
+
+```ts
+ctx.llm.registerModelDiscovery(settingsNs, discover)         // 每个 ns 只能注册一次
+ctx.llm.discoverModels(settingsNs, request, signal?)         // Remote 名 `discoverModels`
+```
+
+`llm-pi-ai` 以 `settingsNs = 'llm-pi-ai'` 注册发现（`packages/llm/llm-pi-ai/src/index.ts:260`）。
+`discoverModels` 的拒绝原因（`RemoteError` code `llm/model-discovery-rejected`，message 里带真实原因）：
+
+- `NO_DISCOVERY`：该 ns 没注册过发现
+- `INVALID_DISCOVERY`：`provider` 与 `baseURL` 都为空
+- `DISCOVERY_FAILED`：路由不在 pi-ai 目录里且没给 `baseURL`（"set a baseURL, or enter this provider's
+  models by hand"）→ **手写路由要显示模型列表，必须把 baseURL 一起传**
+- 给了 `baseURL` 后：`GET {baseURL}/models`（anthropic 线走另一形状），带路由的凭据，需要 `attributionHeaders`
+
+## 14. 客户端（浏览器）插件实读（第 4 期）
+
+### 声明与产物
+
+```json
+"exports": { "./client": { "default": "./client/index.js" } },
+"dsh": { "client": { "platform": "web", "inject": ["<包名>"], "immediately": true } }
+```
+
+- `client-modules` 用 `exports["./client"]` 定位 bundle（`packages/client/modules/src/index.ts:208-218,765`）；
+  缺文件会在**启动时**抛错并提示先 build
+- bundle 是**factory 格式**，不是普通 ESM（见下面模板）——所有 shipped 客户端包由 tsdown 产出这一形态，
+  但只要文件自己调 `window.__ModuleLoader__.load` 即可，**手写也合法**（本插件就手写）
+- 浏览器端 `require()` 只能要 baseline 模块（`PLATFORM_MODULES`：React、Cordis、静态 UI 库）
+  与 `dsh.client.external` 里声明的项；type-only import 会被擦除
+
+```js
+window.__ModuleLoader__.load({
+  id: "<package name>",              // 必须等于包名
+  factory: (require) => {
+    var module = { exports: {} }; var exports = module.exports
+    Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" })
+    const React = require("react")
+    // …组件…
+    exports.NS = NS; exports.inject = inject; exports.apply = apply
+    return module.exports
+  },
+})
+```
+
+### 设置分区
+
+```ts
+declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface SlotMap { 'settings.section': { kind: 'list'; scope: 'root'; owner: SettingsSectionOwnerProps } }
+}
+interface SettingsSectionOwnerProps { close: () => void }   // 唯一的 shell affordance
+```
+
+注册要经 `ctx.slots.inject('settings.section', () => ctx.slots.register({...}, Component))`：
+**槽位由 shell 运行时声明**，声明前直接 `register` 会抛 `slot "…" is not declared`。
+
+options：`name` / `id`（分区 key，驱动导航）/ `order` / `label`（可以是返回字符串的函数）+
+可选 `inject`（业务面工厂，其返回值与 owner props 合并后传给组件）。
+
+### 客户端服务名（易错）
+
+| 客户端服务（`inject` 里写的） | 提供方 | 用途 |
+| --- | --- | --- |
+| `slots` | ui-slots | 槽位注册 |
+| `locale` | dsh-client-locale | 字典；不用可省 |
+| `settingsScope` | ui-settings | `bind({namespace})` → `SettingsScope<T>` |
+| `settingsSchema` | ui-settings | schema 读取 |
+| `remote` | api-gateway | Remote 注册表本体 |
+| `remote.llm` | dsh-llm | `listProviders()` / `discoverModels(ns, req)` |
+| `remote.credentials` | api-settings-controller | `describe(refs) → {configured, source, writable}` |
+| `remote.settings` | api-settings-controller | `describe()` |
+
+**`credentialsController` 是 Host 侧 service 名，客户端 injected 名是 `remote.credentials`。**
+写错不会构建报错，而是在页面上显示 `web boot: … pending (waiting for service: …)`。
+
+`SettingsScope<T>`：`getSnapshot()`（引用稳定）/ `subscribe()` / `set(field, value)` / `unset(field)` /
+`mutate(ops, expectedRevision?)`。快照字段：`status`（loading/ready/unavailable）、`value`、`base`、
+`user`（**字段是否出现在这里**才代表被用户覆盖）、`revision`、`writable`、`mode`。
+
+### 渲染失败是**静默**的
+
+slot 的 `SlotErrorBoundary` 捕获异常后渲染 `<div data-slot-error="<slotKey>" />`，并且
+**崩溃的条目会被"abdicate"**：同一条注册再次挂载也不会重试。所以：
+
+- 页面出现 `data-slot-error` ≈ 你的组件在渲染期抛了
+- 只想看错误必须在**首次挂载前**挂 `console.error` 钩子（`componentDidCatch` 里 `console.error` 一次）
+- 没有打包器的包，值得在 build 里用 stub React **真实跑一次组件渲染**当编译期检查
