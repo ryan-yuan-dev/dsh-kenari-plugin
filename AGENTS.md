@@ -28,8 +28,8 @@
 
 ## 必读顺序
 
-1. `docs/knowledge-base/plugin-rules.md` —— 13 条硬约束，**动手前必读**
-2. `docs/handoff/` 下序号最大的交接文档 —— 状态、决策、下一步、未确认项
+1. `docs/handoff/` 下序号最大的交接文档 —— 状态、决策、下一步、未确认项；**多会话接力时先读最新一份的"接力指南"节**
+2. `docs/knowledge-base/plugin-rules.md` —— 13 条硬约束，**动手前必读**
 3. `docs/plans/2026-09-10-dsh-kenari-plugin-design.md` —— 完整设计与分期实施
 4. 按任务选读知识库（dsh 侧与 Kenari 侧已分目录）：
    - `docs/knowledge-base/dsh/dsh-source-verified.md`（**权威性最高**，patch 语义 / seam 签名 / 依赖定版）
