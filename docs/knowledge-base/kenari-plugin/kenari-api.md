@@ -418,3 +418,78 @@ requires_openai_auth = false
 ## token 效率提示
 
 Markdown 比 HTML 省约 30 倍 token，推荐给模型用 Markdown 上下文。
+
+---
+
+# 第 2 期实测补充（2026-09-10）
+
+以下为实施 REST 工具时用真实 `kn-` key 实测得到的事实，均带当时状态；rc 期随时可能变。
+
+## balance / usage 没有 REST 端点
+
+`GET /v1/account/balance`、`/v1/account/usage` 等路径**不是 API 路由**——返回 200 的 SPA HTML 页面（任何未知 `/v1/*` 都落到站点首页），无 key 与带 key 一样。判定方法：用无效 key 请求，真实 API 路由返 401（`/v1/account/quota` → `401` + 纯文本 `invalid key`），SPA 兜底返 200 HTML。
+
+因此程序化取余额与用量**只有 MCP 一条路**：
+
+```
+POST https://kenari.id/mcp
+Authorization: Bearer kn-...
+Content-Type: application/json
+
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"kenari_balance","arguments":{}}}
+```
+
+- **无状态**：不需要先 `initialize`，也不需要 `Mcp-Session-Id`；直接 `tools/call` 即可（实测 `initialize` 与 `tools/list`、`tools/call` 均可独立调用）
+- 响应用普通 `application/json`（不是 SSE），`Accept: application/json, text/event-stream` 两者都收
+- 结果在 `result.content[].text`；失败是 `result.isError: true` + `content[].text` 说明（**HTTP 状态仍是 200**，不能只看状态码）
+- 无效 key 的文案：`requires a kenari API key. Set Authorization: Bearer kn-... in the MCP server config.`
+- 实测 `kenari_balance` → `Saldo: Rp 248.603`；`kenari_usage` → Markdown 表格（近 30 天按模型的 request / input tok / output tok / biaya）
+- MCP 另暴露 8 个工具（`kenari_search_docs`、`kenari_list_models`、`kenari_balance`、`kenari_usage`、`kenari_quota`、`kenari_web_search`、`kenari_web_fetch`、`kenari_x_search`），schema 与 REST 版本一致
+
+`GET /v1/account/quota` 是唯一的账户 REST 端点，实测返回（Studio 套餐）：
+
+```json
+{ "plan": { "name": "Studio", "windows": {
+    "week":  { "used_rp": 58185, "remaining_rp": 241815, "resets_at": "2026-09-17T00:50:05Z" },
+    "month": { "used_rp": 171210, "remaining_rp": 1028790, "resets_at": "2026-10-02T11:54:59Z" } } },
+  "coupon": null }
+```
+
+窗口无限制时**该键整体省略**（不是 null）。分享页 key 返 403，code 为 `shared_key_not_allowed`。
+
+## 生成类端点耗时：默认 30s 超时不够
+
+`POST /v1/images/generations`（gpt-image-2）单张 1024×1024 会超过 30s；必须用分钟级超时。实测 180s 可通过。
+
+**超时不得自动重试**：生成请求可能已在服务端完成并计费，重试有重复扣费风险；429/5xx 仍可重试。
+
+## 图像与视频的计费单位
+
+目录 `pricing_lines` 给出非 token 端点的单价（micro-IDR）：
+
+| 模型 | 端点 | 单价 | 单位 |
+|---|---|---|---|
+| gpt-image-2 | images | 175000000 micro-IDR = **Rp 175** | 每张图 |
+| grok-imagine-image | images | 300000000 = Rp 300 | 每张图 |
+| kokoro-tts | audio_speech | 75000000 = Rp 75 | 每 1k 字符 |
+| gemini-3-1-flash-tts | audio_speech | 250000000 = Rp 250 | 每 1k 字符 |
+| gemini-omni-flash | videos | 350000000（360p）/ 750000000（720p） | 每秒 |
+| veo-3.1-lite | videos | 500000000 | 每秒（720p） |
+
+## 响应形状补充
+
+- `POST /v1/images/generations`：`data[].url` **恒为 `data:image/png;base64,...` 自包含 data URI**，无外链可下载；`revised_prompt` 常带（实测返回过 `图像尺寸为1:1。`）
+- `POST /v1/images/edits`：multipart，字段 `image`（PNG 二进制）、`mask`、`prompt`、`model`、`n`、`size`、`response_format`；实测 64×64 源图 → 1024×1024 输出约 876KB
+- `POST /v1/ocr`：`reuse_id` 复用实测有效——首次 1 页 `cost_micro_idr: 75000000`（Rp 75），第二次仅传 `reuse_id` 返回 `cost_micro_idr: 0` 且文本一致。`content[]` 是 `{type, text}` 分段数组；`low_confidence` 可能为 true 但置信度仍报 91%（门槛是 kenari 侧）
+- `POST /v1/videos/generations`：立即返回 `{id, object: 'video.job', status: 'rendering', model}`，不阻塞。**模型的时长列表可覆盖文档默认**——`gemini-omni-flash` 只接受 4/6/8/10（传 1 报 400 并列出可选值）
+- `POST /v1/audio/speech`：**2026-09-10 实测全部 TTS 模型（gemini-3-1-flash-tts、kokoro-tts）均 400**，最小请求体 `{model, input}` 也一样，文案为 `the model's provider rejected this request`。属 kenari 上游问题，非调用形状问题；失败不计费
+- `POST /v1/moderations`：公开目录**无 moderation 模型**（`?modality=moderation` 返回空），任何请求 400 并提示「没有可用 moderation 模型」
+- `POST /v1/music/generations`：公开目录**当前无 music 模型**（无 `music` 端点模型）
+- `POST /v1/embeddings`：`qwen3-embedding-0.6b` 返回 1024 维；`POST /v1/rerank`：`bge-reranker-base` 结果按 `relevance_score` 降序，含 `usage.prompt_tokens/total_tokens`
+- `POST /v1/messages/count_tokens`：需 key（无 key 401），只读不计费；实测 `input_tokens` 与文本长度成比例
+
+## 错误信封与鉴权补充
+
+- 401 的响应体是**纯文本 `invalid key`**（不是 JSON），解析时不能假设 JSON
+- 400 的 body 是 `{"error":{"code":"invalid_request_error","message":"...","param":null,"type":"..."}}`
+- `duration` 之类的非法取值报 400 并**列出可选值**，是很好的引导信息

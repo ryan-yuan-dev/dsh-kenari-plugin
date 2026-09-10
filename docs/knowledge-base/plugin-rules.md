@@ -184,3 +184,27 @@ provider 的真实可用性因此在 `search()` / `fetch()` 调用时才暴露�
 **依据**：Kenari agents 文档 —— "balance, usage, and quota tools are rejected for keys from a share page, because those read the owner's account data."
 
 **失败模式**：对分享页 key 反复重试 403。
+
+---
+
+## 14. 生成类调用超时不得自动重试
+
+按次/按页/按秒计费的端点（`/v1/images/*`、`/v1/ocr`、`/v1/audio/*`、`/v1/videos/*`、`/v1/x/search`）在客户端超时后**不能重试**：请求可能已在服务端完成并扣费，重试会造成重复计费。
+
+网络错误、429、5xx 仍可重试——那些状态下服务端明确未产生成功结果。
+
+**实现**：`KenariRequestOptions.retryTimeouts: false`，配套更长的单次超时（`generationTimeoutMs`，默认 180s；30s 对图像生成不够）。
+
+**依据**：Kenari 计费规则「失败调用不计费，成功调用计费」只在服务端判定成功/失败；客户端超时不等于服务端失败。
+
+**失败模式**：用户为同一次生成付两次钱。
+
+---
+
+## 15. 二进制产物走 attachment seam，不塞进 value
+
+工具的 `execute` 返回值必须是 lossless JSON，字节进不去。图像/音频/视频要用 `ctx.attachments.saveImage/saveFile` 落盘，把返回的引用（纯 JSON）放进 value，再由 `output.render` 重建成 `image` / `file` block。
+
+**依据**：`ContentBlock` 的 `image`/`file` 只承载 `ImageAttachmentRef`/`FileAttachmentRef`，字节由 attachment 服务持有（硬约束源自 value 的 JSON 约束与 attachment 的所有权模型）。
+
+**失败模式**：把 base64 塞进 value → 会话日志爆炸或 schema 校验失败。

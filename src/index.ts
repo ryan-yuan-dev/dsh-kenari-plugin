@@ -17,6 +17,15 @@ import { KenariSearchProvider } from './web/search.js'
 import { KenariFetchProvider } from './web/fetch.js'
 import { KenariFirstSearch, KenariFirstFetch } from './web/fallback.js'
 import type { KenariHttpDeps, ResolveApiKey } from './http.js'
+import type { ToolsDeps } from './tools/shared.js'
+import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
+import { registerDocsTools } from './tools/docs.js'
+import { registerAccountTools } from './tools/account.js'
+import { registerXSearchTool } from './tools/x-search.js'
+import { registerOcrTool } from './tools/documents.js'
+import { registerMediaTools } from './tools/media.js'
+import { registerDataTools } from './tools/data.js'
+import { registerCountTokensTool } from './tools/count-tokens.js'
 
 /** Plugin config. Every field a deployment may want to tune is a config field. */
 export interface Config {
@@ -26,6 +35,8 @@ export interface Config {
   baseURL?: string
   /** Per-request timeout for Kenari REST calls in milliseconds. */
   timeoutMs?: number
+  /** Per-attempt timeout for generation calls (image/audio/music/OCR) in milliseconds. */
+  generationTimeoutMs?: number
   /** Retry count for transient Kenari REST failures. */
   maxRetries?: number
   /** Register the Kenari search provider. */
@@ -34,23 +45,30 @@ export interface Config {
   fetchEnabled?: boolean
   /** Fall back to the dsh defaults when a Kenari call fails. */
   fallbackEnabled?: boolean
+  /** TTL for the in-memory cache of Kenari's /llms-full.txt documentation. */
+  docsCacheTtlMs?: number
+  /** Register the Kenari REST capability tools. */
+  toolsEnabled?: boolean
 }
 
 export const Config: z<Config> = z.object({
   apiKeyEnv: z.string().role('credential-ref').default('KENARI_API_KEY'),
   baseURL: z.string().default('https://kenari.id'),
   timeoutMs: z.number().step(1).min(1).default(30_000),
+  generationTimeoutMs: z.number().step(1).min(1).default(180_000),
   maxRetries: z.number().step(1).min(0).default(2),
   searchEnabled: z.boolean().default(true),
   fetchEnabled: z.boolean().default(true),
   fallbackEnabled: z.boolean().default(true),
+  docsCacheTtlMs: z.number().step(1).min(0).default(3_600_000),
+  toolsEnabled: z.boolean().default(true),
 })
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'kenari'
 
-/** The web seam this plugin registers providers into; tools arrive in phase 2. */
-export const inject = ['web']
+/** The web seam and tool registry this plugin uses; settings arrive in phase 4. */
+export const inject = ['web', 'tools']
 
 /**
  * key 读取照抄官方 provider 模式（dsh-source-verified.md §11）：
@@ -66,7 +84,7 @@ function resolveApiKeyOf(ctx: Context, ref: CredentialRef): ResolveApiKey {
   }
 }
 
-/** Register the Kenari capability into the harness. Phase 1: web fallback. */
+/** Register the Kenari capability into the harness. Phase 1: web fallback; phase 2: REST tools. */
 export function apply(ctx: Context, config: Config): void {
   const ref = credentialRef(config.apiKeyEnv ?? 'KENARI_API_KEY')
   const logger = ctx.logger
@@ -118,5 +136,21 @@ export function apply(ctx: Context, config: Config): void {
     }
   }
 
-  logger?.info('kenari: web providers registered (phase 1 — web fallback)')
+  // REST 工具族：defineTool + ctx.tools.register（disposer 挂 fiber，卸载自动回收）
+  if (config.toolsEnabled ?? true) {
+    const toolsDeps: ToolsDeps = { http: deps, ctx, docsCacheTtlMs: config.docsCacheTtlMs ?? 3_600_000 }
+    const register = (tool: ToolDefinition): void => {
+      ctx.tools.register(tool)
+    }
+    registerDocsTools(toolsDeps, register)
+    registerAccountTools(toolsDeps, register)
+    registerXSearchTool(toolsDeps, register)
+    registerOcrTool(toolsDeps, register)
+    registerMediaTools(toolsDeps, register)
+    registerDataTools(toolsDeps, register)
+    registerCountTokensTool(toolsDeps, register)
+    logger?.info('kenari: web providers and REST tools registered')
+  } else {
+    logger?.info('kenari: web providers registered (tools disabled by config)')
+  }
 }

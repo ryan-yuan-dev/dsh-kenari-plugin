@@ -10,7 +10,7 @@
 |---|---|
 | [dsh/](dsh/) | **dsh 自身**的机制事实：插件模型、web 缝、其他缝、vendor 源码实读 |
 | [kenari-plugin/](kenari-plugin/) | **Kenari 侧**的事实：端点、鉴权、schema、计费 |
-| [plugin-rules.md](plugin-rules.md)（顶层） | 跨两者的开发规则：13 条硬约束，违反会导致明确失败模式 |
+| [plugin-rules.md](plugin-rules.md)（顶层） | 跨两者的开发规则：15 条硬约束，违反会导致明确失败模式 |
 
 ## dsh/ — dsh 自身
 

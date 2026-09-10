@@ -369,21 +369,19 @@ dsh 的 `llm-pi-ai` 行默认休眠（零路由），由 Settings → Models 页
 - [x] 验证：dump-config 钉层生效、启动无报错、mock 装配三路径、无效 key → 回退 + 日志
 - [ ] 真实计费验证（②③④场景）：待用户配 `KENARI_API_KEY`
 
-### ⬜ 第 2 期｜REST 工具
+### ✅ 第 2 期｜REST 工具（2026-09-10 完成并验证）
 
-全部用 `defineTool` + `ctx.tools.register`，`inject: ['tools']`。
+全部用 `defineTool` + `ctx.tools.register`，`inject: ['web', 'tools']`，20 个工具：
 
-- `docs.ts`：`kenari_search_docs`（本地检索 `/llms-full.txt`，无需 key）、`kenari_list_models`
-- `account.ts`：`kenari_balance`、`kenari_usage`、`kenari_quota`；403 时识别为分享页 key 并给出说明
-- `x-search.ts`：`kenari_x_search` 与全部过滤参数 —— `allowed_x_handles` / `excluded_x_handles`（≤20 个，不含 @，两者互斥）、`from_date` / `to_date`（YYYY-MM-DD）、`enable_image_understanding` / `enable_video_understanding`
-- `documents.ts`：`kenari_ocr`（`engine: ocr`，`reuse_id` 会话内复用避免重复计费）
-- `media.ts`：图像生成 / 编辑、语音合成 / 转写、音乐生成、视频生成 / 续写 / 状态 / 下载
-- `data.ts`：embeddings、rerank、moderations
-- `kenari_count_tokens`
-
-每个工具统一带：超时、重试、错误映射、成本回显（`cost_micro_idr`）。
-
-**验证**：逐个工具在 Web UI 调用成功；`reuse_id` 第二次调用不重复计费；`allowed_x_handles` 与 `excluded_x_handles` 同传时报参数错误。
+- [x] `docs.ts`：`kenari_search_docs`（本地检索 `/llms-full.txt`，带 TTL 缓存、无需 key）、`kenari_list_models`（公开目录 + 价格换算）
+- [x] `account.ts`：`kenari_quota`（REST `GET /v1/account/quota`）、`kenari_balance` / `kenari_usage`（**REST 无此端点，走公开 MCP 端点**，见知识库实测补充）；403 识别分享页 key 并给出说明
+- [x] `x-search.ts`：`kenari_x_search` 全量过滤参数；handles ≤20/去 @/互斥、日期格式在参数层校验
+- [x] `documents.ts`：`kenari_ocr`，`reuse_id` 复用（实测二次 `cost_micro_idr: 0`）
+- [x] `media.ts`：图像生成/编辑、语音合成/转写、音乐、视频生成/续写/状态/下载共 9 个工具；二进制产物经 `ctx.attachments` 落盘为 image/file block
+- [x] `data.ts`：embeddings / rerank / moderations
+- [x] `count-tokens.ts`：`kenari_count_tokens`（只读不计费）
+- [x] 统一：超时（生成类 `generationTimeoutMs`）、重试（生成类超时不重试，防重复扣费）、错误映射、成本回显
+- [x] 验证：真实 key 下逐工具调用；`reuse_id` 二次免费；handles 同传报参数错；真实 harness（dsh ToolRuntime + LocalAttachmentStore）派发与图像落盘通过
 
 ### ⬜ 第 3 期｜目录、计费与上下文
 

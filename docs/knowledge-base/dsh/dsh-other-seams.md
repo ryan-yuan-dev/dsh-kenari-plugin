@@ -137,6 +137,26 @@ tool/call → tools/pre-execute → tools/execute → tools/post-execute → too
 
 `tools/pre-execute` 是策略钩子（可用于确认、拦截）。工具定义里可声明 `timeoutMs` 作为协作式预算，由 `@deepseek-ai/dsh-timeout-policy` 强制执行。
 
+### 工具返回二进制：ctx.attachments（第 2 期实测）
+
+`@deepseek-ai/dsh-attachment` 的 `AttachmentStore` 挂在 `ctx.attachments`（`dsh-attachment-local` 装的是 `LocalAttachmentStore`，落盘在 `DSH_HOME` 下）。工具产出图像/音频/视频时用它把字节变成耐久引用，再把引用放进规范 value，由 `output.render` 重建 block：
+
+```ts
+// execute 内
+const ref = await ctx.attachments.saveImage({ data: bytes, mediaType: 'image/png', name })
+// render 内
+return [{ type: 'text', text }, { type: 'image', attachment: ref }]
+```
+
+要点（均源码/实测确认）：
+
+- `ImageAttachmentRef` = `{ attachmentId, mediaType, bytes, width, height, name? }`；`FileAttachmentRef` = `{ attachmentId, name, bytes }`。**都是纯 JSON**，可以直接放进 `output.schema` 声明的 value（值必须是 lossless JSON，字节本身进不去）
+- `saveImages(inputs)` 先 `validateImageBatch`（受 `imageLimits` 的 `maxImagesPerMessage` / `maxMessageImageBytes` / `mediaTypes` 约束）再逐张 `validateImage`，任一张不合格**整批不写**
+- `saveFile` 存逐字节原文，无准入限制；基类默认实现抛 `ATTACHMENT_FILES_UNSUPPORTED`，`attachment-local` 已实现
+- 支持的图像类型只有 `image/png|jpeg|webp|gif`（**不含 tiff**）；`attachment-local` 会做归一化（实测 1024×1024 的 PNG 存进去报 1254×1254）
+- 服务缺失时 `ctx.get('attachments')` 返回 undefined（seam 可选），工具应显式降级成文本说明，别静默丢产物
+- 载荷大小走 `imageLimits`/`saveFile` 各自策略，工具的 `timeoutMs` 与 HTTP 超时不受 attachment 影响
+
 ## ctx.web 之外的 web 相关
 
 `dsh-tool-web` 的工具通过 `ctx.web` 执行，但**工具注册与 provider 可用性解耦**：已启用的工具即使 provider 不可用也保持可见，在执行时报结构化错误。

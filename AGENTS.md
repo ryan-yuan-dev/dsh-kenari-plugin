@@ -19,7 +19,7 @@
 |---|---|
 | `docs/knowledge-base/dsh/` | **dsh 自身**的技术事实：插件模型、web 缝、其他缝、vendor 源码实读。**改代码前先读，不要凭记忆推测接口** |
 | `docs/knowledge-base/kenari-plugin/` | **Kenari 侧**的技术事实：端点、鉴权、schema、计费 |
-| `docs/knowledge-base/plugin-rules.md` | 跨两者的开发规则：13 条硬约束 |
+| `docs/knowledge-base/plugin-rules.md` | 跨两者的开发规则：15 条硬约束 |
 | `docs/plans/` | 设计文档与实施计划 |
 | `docs/handoff/` | 交接文档，命名 `NNN-yyyy-MM-dd-HHmmss-title.md` |
 | `src/`、`cordis.patch.yml` | 插件源码与 patch 层（第 0 期已创建） |
@@ -31,7 +31,7 @@
 ## 必读顺序
 
 1. `docs/handoff/` 下序号最大的交接文档 —— 状态、决策、下一步、未确认项（当前为 `002-…-接力主文档.md`，合并了各阶段的活动上下文，自足可开工）
-2. `docs/knowledge-base/plugin-rules.md` —— 13 条硬约束，**动手前必读**
+2. `docs/knowledge-base/plugin-rules.md` —— 15 条硬约束，**动手前必读**
 3. `docs/plans/2026-09-10-dsh-kenari-plugin-design.md` —— 完整设计与分期实施
 4. 按任务选读知识库（dsh 侧与 Kenari 侧已分目录）：
    - `docs/knowledge-base/dsh/dsh-source-verified.md`（**权威性最高**，patch 语义 / seam 签名 / 依赖定版）
