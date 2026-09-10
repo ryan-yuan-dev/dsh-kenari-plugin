@@ -9,6 +9,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import type { ToolsDeps } from './shared.js'
+import { billSpend, estimateByUnit, spendGuard } from './shared.js'
 import { kenariPost, kenariPostBinary, kenariPostMultipart, kenariGet, kenariGetBinary } from '../http.js'
 
 /** 规范 value 里的产物描述：kind 决定 render 重建成 image 还是 file block。 */
@@ -196,7 +197,8 @@ export function registerMediaTools(deps: ToolsDeps, register: (tool: ReturnType<
     },
     timeoutMs: 400000,
     isConcurrencySafe: () => true,
-    async execute(args) {
+    async execute(args, exec) {
+      spendGuard(deps, exec, 'kenari_image_generate')
       const body: Record<string, unknown> = { model: args.model, prompt: args.prompt }
       if (args.n !== undefined) body.n = args.n
       if (args.size !== undefined) body.size = args.size
@@ -216,10 +218,19 @@ export function registerMediaTools(deps: ToolsDeps, register: (tool: ReturnType<
       const saved = await saveImages(deps, images, `kenari-${args.model}.png`)
       const notes = revised.length > 0 ? `\n修订提示词：${revised.join('；')}` : ''
       const storeNote = saved.storeMissing ? '\n（本部署没有挂载 attachment 存储，图像已生成但无法内联展示）' : ''
+      // 图像按张计费：以实际产出张数记账（生成失败时张数为 0，不产生费用）
+      const estimate = await estimateByUnit(deps, args.model, 'images', images.length)
+      const billed = await billSpend(deps, exec, {
+        tool: 'kenari_image_generate',
+        model: args.model,
+        estimateMicroIdr: images.length > 0 ? estimate.microIdr : undefined,
+        estimateNote: estimate.note,
+        note: '按张计费',
+      })
       return {
         count: images.length,
         revised_prompts: revised,
-        text: `已生成 ${images.length} 张图像。${notes}${storeNote}`,
+        text: `已生成 ${images.length} 张图像。${notes}${storeNote}${billed}`,
         attachments: saved.attachments,
       }
     },
@@ -254,7 +265,8 @@ export function registerMediaTools(deps: ToolsDeps, register: (tool: ReturnType<
     },
     timeoutMs: 400000,
     isConcurrencySafe: () => true,
-    async execute(args) {
+    async execute(args, exec) {
+      spendGuard(deps, exec, 'kenari_image_edit')
       const image = decodeDataUri(args.image_data_url, 'image_data_url')
       const fields: Record<string, string | Uint8Array> = {
         model: args.model,
@@ -279,9 +291,17 @@ export function registerMediaTools(deps: ToolsDeps, register: (tool: ReturnType<
       }
       const saved = await saveImages(deps, images, `kenari-edit-${args.model}.png`)
       const storeNote = saved.storeMissing ? '\n（本部署没有挂载 attachment 存储，图像已生成但无法内联展示）' : ''
+      const estimate = await estimateByUnit(deps, args.model, 'images', images.length)
+      const billed = await billSpend(deps, exec, {
+        tool: 'kenari_image_edit',
+        model: args.model,
+        estimateMicroIdr: images.length > 0 ? estimate.microIdr : undefined,
+        estimateNote: estimate.note,
+        note: '按张计费',
+      })
       return {
         count: images.length,
-        text: `编辑完成，产出 ${images.length} 张图像。${storeNote}`,
+        text: `编辑完成，产出 ${images.length} 张图像。${storeNote}${billed}`,
         attachments: saved.attachments,
       }
     },
@@ -301,7 +321,8 @@ export function registerMediaTools(deps: ToolsDeps, register: (tool: ReturnType<
     output: outputWithMedia(),
     timeoutMs: 400000,
     isConcurrencySafe: () => true,
-    async execute(args) {
+    async execute(args, exec) {
+      spendGuard(deps, exec, 'kenari_speech')
       const body: Record<string, unknown> = { model: args.model, input: args.input }
       if (args.voice !== undefined) body.voice = args.voice
       if (args.response_format !== undefined) body.response_format = args.response_format
@@ -309,8 +330,17 @@ export function registerMediaTools(deps: ToolsDeps, register: (tool: ReturnType<
       if (args.language !== undefined) body.language = args.language
       const audio = await kenariPostBinary(deps.http, '/audio/speech', body, undefined, generationOptions(deps))
       const attachments = await saveFile(deps, audio.bytes, `kenari-speech${extensionFor(audio.contentType)}`)
+      // 语音按千字符计费：输入文本长度即计费量
+      const estimate = await estimateByUnit(deps, args.model, 'audio_speech', args.input.length / 1000)
+      const billed = await billSpend(deps, exec, {
+        tool: 'kenari_speech',
+        model: args.model,
+        estimateMicroIdr: estimate.microIdr,
+        estimateNote: estimate.note,
+        note: '按千字符计费',
+      })
       return {
-        text: `语音合成完成：${audio.bytes.length} 字节（${audio.contentType}），文件已保存。`,
+        text: `语音合成完成：${audio.bytes.length} 字节（${audio.contentType}），文件已保存。${billed}`,
         attachments,
       }
     },
@@ -339,7 +369,8 @@ export function registerMediaTools(deps: ToolsDeps, register: (tool: ReturnType<
     },
     timeoutMs: 400000,
     isConcurrencySafe: () => true,
-    async execute(args) {
+    async execute(args, exec) {
+      spendGuard(deps, exec, 'kenari_transcribe')
       const file = decodeDataUri(args.file_data_url, 'file_data_url')
       const fields: Record<string, string | Uint8Array> = {
         model: args.model,
@@ -350,7 +381,19 @@ export function registerMediaTools(deps: ToolsDeps, register: (tool: ReturnType<
       if (args.prompt !== undefined) fields.prompt = args.prompt
       if (args.temperature !== undefined) fields.temperature = String(args.temperature)
       const result = await kenariPostMultipart<TranscriptionResponse>(deps.http, '/audio/transcriptions', fields, undefined, generationOptions(deps))
-      return { text: result.text ?? '(转写结果为空)' }
+      // 转写按秒计费：时长只在 verbose_json 里回显，缺它就如实说明无法预估
+      const duration = result.duration
+      const estimate = duration === undefined
+        ? {}
+        : await estimateByUnit(deps, args.model, 'audio_transcription', duration)
+      const billed = await billSpend(deps, exec, {
+        tool: 'kenari_transcribe',
+        model: args.model,
+        estimateMicroIdr: estimate.microIdr,
+        estimateNote: estimate.note,
+        note: duration === undefined ? '响应未回显时长，改用 response_format=verbose_json 可得到费用预估' : '按秒计费',
+      })
+      return { text: `${result.text ?? '(转写结果为空)'}${billed}` }
     },
   }))
 
@@ -366,7 +409,8 @@ export function registerMediaTools(deps: ToolsDeps, register: (tool: ReturnType<
     output: outputWithMedia(),
     timeoutMs: 500000,
     isConcurrencySafe: () => true,
-    async execute(args) {
+    async execute(args, exec) {
+      spendGuard(deps, exec, 'kenari_music')
       const body: Record<string, unknown> = { model: args.model }
       if (args.prompt !== undefined) body.prompt = args.prompt
       if (args.lyrics !== undefined) body.lyrics = args.lyrics
@@ -376,8 +420,16 @@ export function registerMediaTools(deps: ToolsDeps, register: (tool: ReturnType<
       if (item?.b64_json === undefined) throw new Error('kenari: 音乐响应缺少 b64_json')
       const bytes = Uint8Array.from(Buffer.from(item.b64_json, 'base64'))
       const attachments = await saveFile(deps, bytes, 'kenari-music.mp3')
+      // 音乐按首计费，但公开目录当前无 music 模型，故无单价可查（如实说明未计入）
+      const estimate = await estimateByUnit(deps, args.model, 'music_generations', 1)
+      const billed = await billSpend(deps, exec, {
+        tool: 'kenari_music',
+        model: args.model,
+        estimateMicroIdr: estimate.microIdr,
+        estimateNote: estimate.note,
+      })
       return {
-        text: `音乐生成完成：mp3，${bytes.length} 字节，文件已保存。`,
+        text: `音乐生成完成：mp3，${bytes.length} 字节，文件已保存。${billed}`,
         attachments,
       }
     },
@@ -410,7 +462,8 @@ export function registerMediaTools(deps: ToolsDeps, register: (tool: ReturnType<
     },
     timeoutMs: 60_000,
     isConcurrencySafe: () => true,
-    async execute(args) {
+    async execute(args, exec) {
+      spendGuard(deps, exec, 'kenari_video_generate')
       const body: Record<string, unknown> = { model: args.model, prompt: args.prompt }
       if (args.duration !== undefined) body.duration = args.duration
       if (args.image_url !== undefined) body.image_url = args.image_url
@@ -420,10 +473,20 @@ export function registerMediaTools(deps: ToolsDeps, register: (tool: ReturnType<
       if (args.resolution !== undefined) body.resolution = args.resolution
       const result = await kenariPost<VideoJobResponse>(deps.http, '/videos/generations', body)
       if (result.id === undefined) throw new Error('kenari: 视频响应缺少任务 id')
+      // 视频按秒计费且分分辨率档：分辨率决定单价，时长决定数量
+      const seconds = args.duration ?? 6
+      const estimate = await estimateByUnit(deps, args.model, 'videos', seconds, args.resolution)
+      const billed = await billSpend(deps, exec, {
+        tool: 'kenari_video_generate',
+        model: args.model,
+        estimateMicroIdr: estimate.microIdr,
+        estimateNote: estimate.note,
+        note: '按秒计费；任务失败不计费，实际扣费以成片为准',
+      })
       return {
         job_id: result.id,
         status: result.status ?? 'rendering',
-        text: `视频任务已创建：id=${result.id}，状态 ${result.status ?? 'rendering'}。用 kenari_video_status 轮询；完成后用 kenari_video_content 下载。`,
+        text: `视频任务已创建：id=${result.id}，状态 ${result.status ?? 'rendering'}。用 kenari_video_status 轮询；完成后用 kenari_video_content 下载。${billed}`,
       }
     },
   }))
@@ -451,16 +514,26 @@ export function registerMediaTools(deps: ToolsDeps, register: (tool: ReturnType<
     },
     timeoutMs: 60_000,
     isConcurrencySafe: () => true,
-    async execute(args) {
+    async execute(args, exec) {
+      spendGuard(deps, exec, 'kenari_video_extend')
       const body: Record<string, unknown> = { model: args.model, video: { url: args.video_url } }
       if (args.prompt !== undefined) body.prompt = args.prompt
       if (args.duration !== undefined) body.duration = args.duration
       const result = await kenariPost<VideoJobResponse>(deps.http, '/videos/extensions', body)
       if (result.id === undefined) throw new Error('kenari: 视频续写响应缺少任务 id')
+      const seconds = args.duration ?? 6
+      const estimate = await estimateByUnit(deps, args.model, 'videos', seconds)
+      const billed = await billSpend(deps, exec, {
+        tool: 'kenari_video_extend',
+        model: args.model,
+        estimateMicroIdr: estimate.microIdr,
+        estimateNote: estimate.note,
+        note: '按秒计费；失败不计费',
+      })
       return {
         job_id: result.id,
         status: result.status ?? 'rendering',
-        text: `续写任务已创建：id=${result.id}，状态 ${result.status ?? 'rendering'}。`,
+        text: `续写任务已创建：id=${result.id}，状态 ${result.status ?? 'rendering'}。${billed}`,
       }
     },
   }))

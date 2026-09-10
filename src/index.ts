@@ -19,6 +19,9 @@ import { KenariFirstSearch, KenariFirstFetch } from './web/fallback.js'
 import type { KenariHttpDeps, ResolveApiKey } from './http.js'
 import type { ToolsDeps } from './tools/shared.js'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
+import { KenariCatalog } from './catalog.js'
+import { BalanceMonitor, BillingLedger } from './billing.js'
+import { installKenariSettings } from './settings.js'
 import { registerDocsTools } from './tools/docs.js'
 import { registerAccountTools } from './tools/account.js'
 import { registerXSearchTool } from './tools/x-search.js'
@@ -26,6 +29,7 @@ import { registerOcrTool } from './tools/documents.js'
 import { registerMediaTools } from './tools/media.js'
 import { registerDataTools } from './tools/data.js'
 import { registerCountTokensTool } from './tools/count-tokens.js'
+import { registerBillingTool } from './tools/billing.js'
 
 /** Plugin config. Every field a deployment may want to tune is a config field. */
 export interface Config {
@@ -47,8 +51,22 @@ export interface Config {
   fallbackEnabled?: boolean
   /** TTL for the in-memory cache of Kenari's /llms-full.txt documentation. */
   docsCacheTtlMs?: number
+  /** TTL for the in-memory cache of Kenari's /v1/models catalog. */
+  catalogCacheTtlMs?: number
   /** Register the Kenari REST capability tools. */
   toolsEnabled?: boolean
+  /** Extra model aliases: `{ alias: 'exact-model-id' }`, usable wherever a model id is accepted. */
+  modelAliases?: Record<string, string>
+  /** Warn after a billed call when the wallet drops below this many Rupiah; 0 disables the check. */
+  lowBalanceAlertRp?: number
+  /** TTL for the cached wallet balance used by the low-balance alert. */
+  balanceCacheTtlMs?: number
+  /** Per-session spend ceiling in Rupiah; 0 leaves spending uncapped. */
+  budgetCapRp?: number
+  /** Register the plugin's own Kenari LlmAdapter (phase 5); off keeps the llm-pi-ai preset route. */
+  nativeAdapterEnabled?: boolean
+  /** Provider route id for the plugin's own LlmAdapter. */
+  nativeProviderId?: string
 }
 
 export const Config: z<Config> = z.object({
@@ -61,21 +79,30 @@ export const Config: z<Config> = z.object({
   fetchEnabled: z.boolean().default(true),
   fallbackEnabled: z.boolean().default(true),
   docsCacheTtlMs: z.number().step(1).min(0).default(3_600_000),
+  catalogCacheTtlMs: z.number().step(1).min(0).default(3_600_000),
   toolsEnabled: z.boolean().default(true),
+  modelAliases: z.dict(z.string()).default({}),
+  lowBalanceAlertRp: z.number().step(1).min(0).default(5_000),
+  balanceCacheTtlMs: z.number().step(1).min(0).default(300_000),
+  budgetCapRp: z.number().step(1).min(0).default(0),
+  nativeAdapterEnabled: z.boolean().default(false),
+  nativeProviderId: z.string().default('kenari-direct'),
 })
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'kenari'
 
-/** The web seam and tool registry this plugin uses; settings arrive in phase 4. */
+/** 需要 web seam 与工具注册表；settings 是可选 seam（缺失时退化为 composition 配置）。 */
 export const inject = ['web', 'tools']
 
 /**
  * key 读取照抄官方 provider 模式（dsh-source-verified.md §11）：
  * 优先 credentials seam，缺 seam 回退 launchEnvironment；每次现场解析（热轮换）。
+ * 引用名取自实时配置视图，所以设置页改 `apiKeyEnv` 后下一次操作就换引用。
  */
-function resolveApiKeyOf(ctx: Context, ref: CredentialRef): ResolveApiKey {
+function resolveApiKeyOf(ctx: Context, refOf: () => CredentialRef): ResolveApiKey {
   return async () => {
+    const ref = refOf()
     const credentials = ctx.get('credentials')
     if (credentials !== undefined) return (await credentials.resolve(ref))?.value
     // 无 seam 时回退到启动环境快照
@@ -84,18 +111,36 @@ function resolveApiKeyOf(ctx: Context, ref: CredentialRef): ResolveApiKey {
   }
 }
 
-/** Register the Kenari capability into the harness. Phase 1: web fallback; phase 2: REST tools. */
+/**
+ * Register the Kenari capability into the harness.
+ * 第 1 期 web fallback；第 2 期 REST 工具；第 3 期目录 / 计费账本 / 窗口监控；
+ * 第 4 期设置节（Host 半边）。
+ */
 export function apply(ctx: Context, config: Config): void {
-  const ref = credentialRef(config.apiKeyEnv ?? 'KENARI_API_KEY')
+  // 设置节：用户层提交后 current() 立即返回新值，插件各处读实时视图
+  const live = installKenariSettings(ctx, Config, config)
+  const liveConfig = live.view
+  const refOf = (): CredentialRef => credentialRef(liveConfig.apiKeyEnv ?? 'KENARI_API_KEY')
   const logger = ctx.logger
   const deps: KenariHttpDeps = {
-    config,
-    resolveApiKey: resolveApiKeyOf(ctx, ref),
+    config: liveConfig,
+    resolveApiKey: resolveApiKeyOf(ctx, refOf),
     logger,
   }
 
+  // 目录与账本是跨工具共享的进程级单例：目录带 TTL 缓存，账本按会话作用域累计。
+  // 先于 provider 建立，web 搜索/抓取的按次扣费也记进同一本账（global 作用域）。
+  const catalog = new KenariCatalog(deps)
+  const budgetCapRp = config.budgetCapRp ?? 0
+  const billing = new BillingLedger(budgetCapRp > 0 ? budgetCapRp * 1_000_000 : undefined)
+  const balance = new BalanceMonitor(deps)
+  const recordWebSpend = (microIdr: number, kind: 'search' | 'fetch'): void => {
+    // web 工具没有会话归属，落 global 作用域；金额来自响应回显，非预估
+    billing.recordSpend('global', { tool: `web_${kind}`, microIdr, estimated: false })
+  }
+
   if (config.searchEnabled ?? true) {
-    const kenariSearch = new KenariSearchProvider(deps)
+    const kenariSearch = new KenariSearchProvider(deps, recordWebSpend)
     if (config.fallbackEnabled ?? true) {
       // 兜底实例：传 resolveApiKey thunk（每次现场解析），否则 available() 判不可用。
       // 绝不能注册进 seam（id `deepseek-official` 冲突 → WEB_DUPLICATE_PROVIDER）。
@@ -119,7 +164,7 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   if (config.fetchEnabled ?? true) {
-    const kenariFetch = new KenariFetchProvider(deps)
+    const kenariFetch = new KenariFetchProvider(deps, recordWebSpend)
     if (config.fallbackEnabled ?? true) {
       // 第二参 resolveAddresses 有默认值，只传 limits（5 字段，0.1.5-rc.1）。
       // 同样绝不注册（id `http` 冲突）。
@@ -138,7 +183,14 @@ export function apply(ctx: Context, config: Config): void {
 
   // REST 工具族：defineTool + ctx.tools.register（disposer 挂 fiber，卸载自动回收）
   if (config.toolsEnabled ?? true) {
-    const toolsDeps: ToolsDeps = { http: deps, ctx, docsCacheTtlMs: config.docsCacheTtlMs ?? 3_600_000 }
+    const toolsDeps: ToolsDeps = {
+      http: deps,
+      ctx,
+      config: liveConfig,
+      catalog,
+      billing,
+      balance,
+    }
     const register = (tool: ToolDefinition): void => {
       ctx.tools.register(tool)
     }
@@ -149,7 +201,8 @@ export function apply(ctx: Context, config: Config): void {
     registerMediaTools(toolsDeps, register)
     registerDataTools(toolsDeps, register)
     registerCountTokensTool(toolsDeps, register)
-    logger?.info('kenari: web providers and REST tools registered')
+    registerBillingTool(toolsDeps, register)
+    logger?.info('kenari: web providers, REST tools, catalog and billing ledger registered')
   } else {
     logger?.info('kenari: web providers registered (tools disabled by config)')
   }

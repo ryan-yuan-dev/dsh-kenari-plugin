@@ -15,10 +15,16 @@ const KENARI_DEFAULT_RESULTS = 5
 /** seam 词汇 → Kenari 请求的映射要点（对照知识库 kenari-api.md）。 */
 export const KENARI_SEARCH_PROVIDER_ID = 'kenari-fallback'
 
+/** 计费回调：web 搜索按次扣费，记进共享账本（无会话归属，落 global 作用域）。 */
+export type RecordWebSpend = (microIdr: number, kind: 'search' | 'fetch') => void
+
 export class KenariSearchProvider implements WebSearchProvider {
   readonly id = KENARI_SEARCH_PROVIDER_ID
 
-  constructor(private readonly deps: KenariHttpDeps) {}
+  constructor(
+    private readonly deps: KenariHttpDeps,
+    private readonly recordSpend?: RecordWebSpend,
+  ) {}
 
   /** key 现场解析，本地判定可用性；不发网络请求。 */
   available(): boolean {
@@ -33,6 +39,7 @@ export class KenariSearchProvider implements WebSearchProvider {
       { query: request.query, max_results: maxResults },
       signal,
     )
+    if (typeof response.cost_micro_idr === 'number') this.recordSpend?.(response.cost_micro_idr, 'search')
     const results = response.results ?? []
     // content 字段为 Kenari 的条目摘要，映射到 snippet；顶层 content 留空（seam 语义：provider 生成答案）
     const sources: WebSearchSource[] = results.flatMap((item) => {

@@ -6,7 +6,7 @@
 
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolsDeps } from './shared.js'
-import { formatRupiah } from './shared.js'
+import { billSpend, spendGuard } from './shared.js'
 import { kenariPost } from '../http.js'
 import type { KenariRequestOptions } from '../http.js'
 
@@ -53,7 +53,8 @@ export function registerOcrTool(deps: ToolsDeps, register: (tool: ReturnType<typ
     },
     timeoutMs: 400_000,
     isConcurrencySafe: () => true,
-    async execute(args) {
+    async execute(args, exec) {
+      spendGuard(deps, exec, 'kenari_ocr')
       if (args.file_data !== undefined && args.reuse_id !== undefined) {
         throw new Error('file_data 与 reuse_id 不可同时提供')
       }
@@ -92,8 +93,14 @@ export function registerOcrTool(deps: ToolsDeps, register: (tool: ReturnType<typ
         `OCR 完成：${result.pages ?? '?'} 页，置信度${result.confidence === null || result.confidence === undefined ? '未知' : ` ${Math.round(result.confidence * 100)}%`}${result.low_confidence === true ? '（低置信度告警）' : ''}。`,
         `复用凭证 reuse_id：${result.reuse_id} —— 下次读同一文档传这个 id，不再计费。`,
       ]
-      if (result.cost_micro_idr !== undefined) summary.push(`费用：${formatRupiah(result.cost_micro_idr)}（${result.cost_micro_idr === 0 ? '复用命中，免费' : '按页计费'}）`)
       summary.push('', text)
+
+      const billed = await billSpend(deps, exec, {
+        tool: 'kenari_ocr',
+        costMicroIdr: result.cost_micro_idr,
+        note: result.cost_micro_idr === 0 ? '复用命中，本次免费' : '按页计费',
+      })
+      if (billed.length > 0) summary.push(billed.trimStart())
 
       return {
         reuse_id: result.reuse_id,

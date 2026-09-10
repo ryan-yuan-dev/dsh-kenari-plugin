@@ -7,6 +7,7 @@
 import type { WebFetchProvider, WebFetchRequest, WebFetchResult } from '@deepseek-ai/dsh-web'
 import type { KenariHttpDeps } from '../http.js'
 import { kenariPost, type KenariFetchResponse } from '../http.js'
+import type { RecordWebSpend } from './search.js'
 
 export const KENARI_FETCH_PROVIDER_ID = 'kenari-fallback'
 
@@ -16,7 +17,10 @@ const MAX_APPENDED_LINKS = 20
 export class KenariFetchProvider implements WebFetchProvider {
   readonly id = KENARI_FETCH_PROVIDER_ID
 
-  constructor(private readonly deps: KenariHttpDeps) {}
+  constructor(
+    private readonly deps: KenariHttpDeps,
+    private readonly recordSpend?: RecordWebSpend,
+  ) {}
 
   /** key 现场解析，本地判定可用性；不发网络请求。 */
   available(): boolean {
@@ -30,6 +34,7 @@ export class KenariFetchProvider implements WebFetchProvider {
       { url: request.url },
       signal,
     )
+    if (typeof response.cost_micro_idr === 'number') this.recordSpend?.(response.cost_micro_idr, 'fetch')
     const links = response.links ?? []
     const bodyParts = [response.content ?? '']
     if (links.length > 0) {

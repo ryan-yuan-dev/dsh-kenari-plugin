@@ -7,7 +7,7 @@
 
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolsDeps } from './shared.js'
-import { costLine } from './shared.js'
+import { billSpend, spendGuard } from './shared.js'
 import { kenariPost } from '../http.js'
 
 /** handle 约束：≤20 个、不含 @（OpenAPI pattern 限字母数字下划线）。 */
@@ -82,7 +82,8 @@ export function registerXSearchTool(deps: ToolsDeps, register: (tool: ReturnType
     },
     timeoutMs: 60_000,
     isConcurrencySafe: () => true,
-    async execute(args) {
+    async execute(args, exec) {
+      spendGuard(deps, exec, 'kenari_x_search')
       // 互斥与形状约束 schema 表达不了，参数级校验（硬约束：同传报参数错）
       if (args.allowed_x_handles !== undefined && args.excluded_x_handles !== undefined) {
         throw new Error('allowed_x_handles 与 excluded_x_handles 不可同时使用')
@@ -115,7 +116,12 @@ export function registerXSearchTool(deps: ToolsDeps, register: (tool: ReturnType
       const citations = (result.citations ?? [])
         .map((c) => `- [${c.title ?? c.url}](${c.url})`)
         .join('\n')
-      const text = `${result.answer ?? '(无答案)'}${citations.length > 0 ? `\n\n来源：\n${citations}` : ''}${costLine(result.cost_micro_idr)}`
+      const billed = await billSpend(deps, exec, {
+        tool: 'kenari_x_search',
+        costMicroIdr: result.cost_micro_idr,
+        note: '按次计费',
+      })
+      const text = `${result.answer ?? '(无答案)'}${citations.length > 0 ? `\n\n来源：\n${citations}` : ''}${billed}`
       return {
         answer: result.answer ?? '',
         citations: result.citations ?? [],

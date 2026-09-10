@@ -25,3 +25,94 @@
 # Re-enable the web tools that dsh-web-app disabled for the web profile.
 - id: tool-web
   disabled: false
+
+# ---------------------------------------------------------------------------
+# Kenari as a session model — zero-code preset on the dormant `llm-pi-ai` row.
+#
+# dsh-base mounts `llm-pi-ai` with no config, so no models exist until a
+# `llm-pi-ai:` settings section supplies provider profiles. Supplying a
+# `providers` dict here is the same thing the web Models page writes; the
+# composition layer and a user-settings layer merge per provider route, so a
+# user adding their own route (or overriding this one) still works.
+#
+# Everything below is verified against https://kenari.id/v1 on 2026-09-10 with
+# `step-3-7-flash:free` (free, so the probe cost nothing):
+#   - `max_tokens` is the output-cap field the gateway reads; sending
+#     `max_completion_tokens` instead is silently ignored (HTTP 200, cap lost).
+#   - `stream_options: {include_usage: true}` is accepted and the last SSE chunk
+#     carries `usage`, so `supportsUsageInStreaming` is on for cached_tokens
+#     accounting.
+#   - streams carry `finish_reason`; tool definitions produce `tool_calls`.
+#   - the [OI] line lives at `https://kenari.id/v1`; the Anthropic line is the
+#     bare host `https://kenari.id` (no /v1) and Responses is /v1 again. A wrong
+#     shape answers 405, not 404.
+#
+# Only free models are preset: a fresh Rp 0 account gets a working agent with no
+# billing risk, and paid models are one Models-page entry away.
+# ---------------------------------------------------------------------------
+- id: llm-pi-ai
+  config:
+    providers:
+      kenari:
+        displayName: Kenari
+        apiKeyEnv: KENARI_API_KEY
+        api: openai-completions
+        baseURL: https://kenari.id/v1
+        compat:
+          supportsDeveloperRole: false
+          maxTokensField: max_tokens
+          supportsUsageInStreaming: true
+          supportsFinishReason: true
+          supportsReasoningEffort: true
+          supportsStore: false
+        defaultInput: [text]
+        models:
+          - id: step-3-7-flash:free
+            name: Step 3.7 Flash（免费，推荐）
+            contextWindow: 262144
+            input: [text, image]
+            reasoningEfforts: { low: low, medium: medium, high: high }
+          - id: glm-4-7-flash:free
+            name: GLM-4.7 Flash（免费）
+            contextWindow: 131072
+            input: [text]
+          - id: hy3:free
+            name: Hunyuan 3（免费）
+            contextWindow: 262144
+            input: [text]
+            reasoningEfforts: { off: none, low: low, high: high }
+          - id: laguna-s-2-1:free
+            name: Laguna S 2.1（免费）
+            contextWindow: 262144
+            input: [text]
+          - id: laguna-xs-2-1:free
+            name: Laguna XS 2.1（免费）
+            contextWindow: 262144
+            input: [text]
+          - id: mimo-v2-5:free
+            name: MiMo v2.5（免费，视觉）
+            contextWindow: 1050000
+            input: [text, image]
+          - id: mistral-medium-3-5:free
+            name: Mistral Medium 3.5（免费，视觉）
+            contextWindow: 262144
+            input: [text, image]
+            reasoningEfforts: { off: none, high: high }
+          - id: muse-spark-1-2-contributor:free
+            name: Muse Spark 1.2 Contributor（免费，视觉）
+            contextWindow: 1048576
+            input: [text, image]
+            reasoningEfforts: { minimal: minimal, low: low, medium: medium, high: high, xhigh: xhigh }
+          - id: muse-spark-1-3-contributor:free
+            name: Muse Spark 1.3 Contributor（免费，视觉）
+            contextWindow: 1048576
+            input: [text, image]
+            reasoningEfforts: { minimal: minimal, low: low, medium: medium, high: high, xhigh: xhigh }
+          - id: nemotron-3-super-120b-a12b:free
+            name: Nemotron 3 Super 120B（免费）
+            contextWindow: 262144
+            input: [text]
+          - id: nemotron-3-ultra-550b-a55b:free
+            name: Nemotron 3 Ultra 550B（免费）
+            contextWindow: 1000000
+            input: [text]
