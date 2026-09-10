@@ -24,11 +24,11 @@
 | `docs/handoff/` | 交接文档，命名 `NNN-yyyy-MM-dd-HHmmss-title.md` |
 | `src/`、`cordis.patch.yml` | 插件源码与 patch 层（第 0 期已创建） |
 
-**硬规则：交接文档文件名必须是 `NNN-yyyy-MM-dd-HHmmss-title.md`** —— `NNN` 三位序号从 `001` 递增，时间戳为创建时刻本地时区，`title` 为简短中文描述。新增时序号取当前最大值 +1。不要用 `README.md`。
+**硬规则：交接文档文件名必须是 `NNN-yyyy-MM-dd-HHmmss-title.md`** —— `NNN` 三位序号从 `001` 递增，时间戳为创建时刻本地时区，`title` 为简短中文描述。新增时序号取当前最大值 +1。不要用 `README.md`。旧交接文档是归档，不再维护；仍有效的关键事实在写新交接时复制过去。
 
 ## 必读顺序
 
-1. `docs/handoff/` 下序号最大的交接文档 —— 状态、决策、下一步、未确认项；**多会话接力时先读最新一份的"接力指南"节**
+1. `docs/handoff/` 下**序号最大的那一份**交接文档 —— 只读这一份。交接文档是追加式快照，最新一份必须自足；旧文档一律不读（省上下文），写新交接时把旧文档仍有效的关键事实复制进新文档，不做"见 `00N-*`"式跳转引用
 2. `docs/knowledge-base/plugin-rules.md` —— 13 条硬约束，**动手前必读**
 3. `docs/plans/2026-09-10-dsh-kenari-plugin-design.md` —— 完整设计与分期实施
 4. 按任务选读知识库（dsh 侧与 Kenari 侧已分目录）：
@@ -74,4 +74,4 @@ dsh --profile web                              # 启动（默认端口 3080）
 
 ## 下一步
 
-第 1 期：web fallback（Kenari HTTP 客户端 + search/fetch/fallback provider）。要点与验证标准见 `docs/handoff/` 下最新交接文档（当前为 `003-*`）。
+第 1 期：web fallback（Kenari HTTP 客户端 + search/fetch/fallback provider）。要点与验证标准见 `docs/handoff/` 下最新交接文档（当前为 `004-*`）。
