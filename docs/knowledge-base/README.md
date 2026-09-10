@@ -12,15 +12,17 @@
 | [dsh-plugin-model.md](dsh-plugin-model.md) | dsh 插件模型：模块形态、配置、打包、层序、安装 |
 | [dsh-web-seam.md](dsh-web-seam.md) | web 能力缝：provider 接口、选择语义、dsh-base 默认配置 |
 | [dsh-other-seams.md](dsh-other-seams.md) | llm / settings / credentials / tools / MCP 客户端接口 |
+| [dsh-source-verified.md](dsh-source-verified.md) | vendor 源码实读：patch 语义、模块加载、seam 签名、依赖包名（权威性最高） |
 | [kenari-api.md](kenari-api.md) | Kenari 端点、鉴权、schema、计费 |
 
 ## 来源与优先级
 
 **权威性从高到低**：
 
-1. npm 包的 `.d.ts` 与 `cordis.patch.yml` —— 实现即真相，**优先于文档**
-2. 官方文档站 `https://deepseek-harness.github.io/deepseek-harness/en/` 的 develop / reference 章节
-3. `https://kenari.id/openapi.json`（OpenAPI 3.1 spec）
+1. `vendor/deepseek-harness` submodule 源码（`dsh-source-verified.md`）—— 实现即真相
+2. npm 包的 `.d.ts` 与 `cordis.patch.yml` —— 实现即真相，**优先于文档**
+3. 官方文档站 `https://deepseek-harness.github.io/deepseek-harness/en/` 的 develop / reference 章节
+4. `https://kenari.id/openapi.json`（OpenAPI 3.1 spec）
 
 以下两个页面内容很薄，**不可作为依据**：
 

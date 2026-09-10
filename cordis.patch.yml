@@ -1,0 +1,27 @@
+# The dsh-kenari-plugin bundle patch. Applied after the dsh-base and
+# dsh-web-app layers, addressing their rows by id; the last write wins per row.
+#
+# A patch replaces the targeted row's whole `config` rather than merging into
+# it, so a row overridden here must restate every key it owns. `disabled` is a
+# key of the row itself, independent of `config`.
+#
+# dsh-web-app disables the `tool-web` row on the web profile by patching
+# `disabled: true` (its own patch writes no config), so re-enabling needs only
+# `disabled: false` — the row's base config (fetch: true, searchTimeoutMs:
+# 60000) stays intact.
+
+- insert:
+    # The main plugin: registers web providers, tools, and settings sections.
+    - id: kenari
+      name: dsh-kenari-plugin
+
+# Pin the composed Kenari-first provider into the web seam. Both keys must be
+# restated: replacing `config` drops anything omitted.
+- id: web
+  config:
+    searchProvider: kenari-fallback
+    fetchProvider: kenari-fallback
+
+# Re-enable the web tools that dsh-web-app disabled for the web profile.
+- id: tool-web
+  disabled: false
