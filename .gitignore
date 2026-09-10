@@ -1,0 +1,7 @@
+node_modules/
+lib/
+dist/
+*.log
+
+# macOS
+.DS_Store
