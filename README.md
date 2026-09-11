@@ -2,7 +2,7 @@
 
 把 [Kenari](https://kenari.id)（kenari.id）接成 DeepSeek Harness（dsh）的一等公民：
 
-- **会话模型**：Kenari 的模型可以当 dsh 的会话模型用（11 个免费模型开箱可选）
+- **会话模型**：Kenari 的模型可以当 dsh 的会话模型用，默认路由按你 key 的套餐自动填（见「选模型」）
 - **web provider**：搜索与抓取走 Kenari 优先，失败回退 dsh 默认 provider
 - **21 个工具**：OCR、图像、音视频、嵌入、重排、审核、账户、目录、计费、token 计数
 - **设置界面**：Settings → Kenari，看凭据状态、改运行参数、看模型目录
@@ -37,22 +37,34 @@ KENARI_API_KEY=kn-...
 
 ## 选模型
 
-装上后 Settings → Models 里会出现 **Kenari** 路由，11 个免费模型已就绪：
+装上后 Settings → Models 里会出现 **Kenari** 路由。**默认模型按你 key 的套餐决定**：插件在加载时读
+`GET /v1/account/quota` 拿到套餐名，再从套餐表取该套餐的 `free_cache_models`（这些模型的缓存读取不占
+套餐额度），把它写进路由——只写一次，之后这一层归你，插件不会再动。
+
+读不到套餐（没配 key、分享页 key 被 403、账户没有套餐）时，用预置的兜底清单：
 
 | 模型 | 上下文 | 备注 |
 | --- | --- | --- |
-| `step-3-7-flash:free` | 262k | 推荐默认，支持工具调用、图片输入、reasoning 档位 |
-| `muse-spark-1-3-contributor:free` | 1M | 视觉，5 档 reasoning |
-| `nemotron-3-ultra-550b-a55b:free` | 1M | |
-| `mimo-v2-5:free` | 1.05M | |
-| `mistral-medium-3-5:free` | 262k | 视觉 |
-| `glm-4-7-flash:free` · `hy3:free` · `laguna-s-2-1:free` · `laguna-xs-2-1:free` · `nemotron-3-super-120b-a12b:free` · `muse-spark-1-2-contributor:free` | | |
+| `deepseek-v4-flash` | 1M | reasoning low/high/max |
+| `glm-5-3-flash` | 1M | 视觉，reasoning low/high/max |
+| `gpt-5-6-luna` | 872k | 视觉 + PDF，6 档 reasoning |
+| `mimo-v2-5` | 1.05M | 视觉 + 音频 + 视频 |
 
-预设**只放免费模型**：Rp 0 的新账户装上就能跑，不会因为手滑产生费用。要用付费模型，在 Settings → Models 里给 `kenari` 路由加一条 model entry，或在设置文档里加自己的路由。
+这份兜底正好是 **Kreator 与 Studio** 两档的免缓存清单，所以这两档的账户（例如我们的实测账户）
+算出来与预设一致，插件不会去写设置。
+
+**`:free` 模型默认不进路由。** 想用它们：在下面的「可选模型」面板里按 `免费` 筛一下再加，
+或直接勾选加入。免费模型 id 都带 `:free` 后缀，一眼能认。
+
+> ⚠️ 这四条都不是免费模型：**没有余额的新账户第一次会话会拿到 402**，请先在面板里加一个 `:free`
+> 模型，或充值。这是"默认不用免费模型"的代价。
+
+自己改过路由的模型列表之后，**用户层优先**（显式写在设置里的数组会整份替换预设，这是 pi-ai 的语义），
+插件不会再覆盖你。
 
 ### 按能力与套餐挑模型
 
-预设只列了 11 个免费模型，而 Kenari 目录里实际有 80 个。**设置 → 模型 → Kenari** 这一行上会多出一块
+目录里有 80 个模型，路由里默认只有 4 个。**设置 → 模型 → Kenari** 这一行上会多出一块
 「Kenari 可选模型（能力 / 套餐筛选）」（Kenari 设置分区里也有同样的面板）：
 
 - 每行只显示**模型 id**（不显示厂商给的可读名：id 才是请求与路由条目里用的那个字符串），

@@ -47,8 +47,20 @@
 #     bare host `https://kenari.id` (no /v1) and Responses is /v1 again. A wrong
 #     shape answers 405, not 404.
 #
-# Only free models are preset: a fresh Rp 0 account gets a working agent with no
-# billing risk, and paid models are one Models-page entry away.
+# The models below are a FALLBACK preset, not the whole story. `:free` models are
+# deliberately absent: the intended default is whatever the account's plan gives
+# free cache reads on, which only the plan table knows and only the Host can read
+# at runtime (the browser cannot — /api/plans sends no CORS header). So the plugin
+# computes that default on load (src/default-route.ts): plan -> its
+# `free_cache_models` -> written into this route's user layer once. If the key or
+# the plan is unavailable, this preset stands, and it is exactly the free-cache
+# list of the Kreator and Studio plans.
+#
+# Consequences worth knowing: none of these four is free, so an account with no
+# balance reaches HTTP 402 on its first session until it picks something else —
+# the trade for not defaulting to free models. Field shape mirrors what
+# src/catalog.ts's `toModelProfile()` writes, so the preset and the computed
+# default produce identical entries for the same ids.
 #
 # Failure recovery: `retryPolicy` below must stay in sync with the plugin's
 # `modelRetryMaxRetries` / `modelRetryDelayMs` (which drive the kenari-direct
@@ -85,52 +97,18 @@
           supportsStore: false
         defaultInput: [text]
         models:
-          - id: step-3-7-flash:free
-            name: Step 3.7 Flash（免费，推荐）
-            contextWindow: 262144
+          - id: deepseek-v4-flash
+            contextWindow: 1048576
+            input: [text]
+            reasoningEfforts: { low: low, high: high, max: max }
+          - id: glm-5-3-flash
+            contextWindow: 1000000
             input: [text, image]
-            reasoningEfforts: { low: low, medium: medium, high: high }
-          - id: glm-4-7-flash:free
-            name: GLM-4.7 Flash（免费）
-            contextWindow: 131072
-            input: [text]
-          - id: hy3:free
-            name: Hunyuan 3（免费）
-            contextWindow: 262144
-            input: [text]
-            reasoningEfforts: { off: none, low: low, high: high }
-          - id: laguna-s-2-1:free
-            name: Laguna S 2.1（免费）
-            contextWindow: 262144
-            input: [text]
-          - id: laguna-xs-2-1:free
-            name: Laguna XS 2.1（免费）
-            contextWindow: 262144
-            input: [text]
-          - id: mimo-v2-5:free
-            name: MiMo v2.5（免费，视觉）
+            reasoningEfforts: { low: low, high: high, max: max }
+          - id: gpt-5-6-luna
+            contextWindow: 872000
+            input: [text, image]
+            reasoningEfforts: { off: none, low: low, medium: medium, high: high, xhigh: xhigh, max: max }
+          - id: mimo-v2-5
             contextWindow: 1050000
             input: [text, image]
-          - id: mistral-medium-3-5:free
-            name: Mistral Medium 3.5（免费，视觉）
-            contextWindow: 262144
-            input: [text, image]
-            reasoningEfforts: { off: none, high: high }
-          - id: muse-spark-1-2-contributor:free
-            name: Muse Spark 1.2 Contributor（免费，视觉）
-            contextWindow: 1048576
-            input: [text, image]
-            reasoningEfforts: { minimal: minimal, low: low, medium: medium, high: high, xhigh: xhigh }
-          - id: muse-spark-1-3-contributor:free
-            name: Muse Spark 1.3 Contributor（免费，视觉）
-            contextWindow: 1048576
-            input: [text, image]
-            reasoningEfforts: { minimal: minimal, low: low, medium: medium, high: high, xhigh: xhigh }
-          - id: nemotron-3-super-120b-a12b:free
-            name: Nemotron 3 Super 120B（免费）
-            contextWindow: 262144
-            input: [text]
-          - id: nemotron-3-ultra-550b-a55b:free
-            name: Nemotron 3 Ultra 550B（免费）
-            contextWindow: 1000000
-            input: [text]

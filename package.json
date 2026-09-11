@@ -25,6 +25,7 @@
     "build": "tsc -p tsconfig.json && node scripts/check-client.mjs",
     "check:client": "node scripts/check-client.mjs",
     "test": "node test/real-harness.mjs",
+    "test:default-route": "node test/default-route.mjs",
     "test:view": "node test/catalog-view.mjs"
   },
   "dsh": {

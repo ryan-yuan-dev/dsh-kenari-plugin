@@ -23,6 +23,7 @@ import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { KenariCatalog } from './catalog.js'
 import { KenariPlans } from './plans.js'
 import { registerCatalogView } from './catalog-view.js'
+import { applyPlanDefaultRoute } from './default-route.js'
 import { BalanceMonitor, BillingLedger } from './billing.js'
 import { installKenariSettings, KENARI_SETTINGS_NAMESPACE } from './settings.js'
 import { KenariLlmAdapter } from './llm/adapter.js'
@@ -277,6 +278,13 @@ export function apply(ctx: Context, config: Config): void {
   // 只在挂载了 connection 的 web profile 生效；数据与目录/套餐缓存同源，
   // 所以设置页看到的标签与 kenari_list_models 说的是同一件事。
   registerCatalogView(ctx, { http: deps, catalog, plans })
+
+  // 默认路由：按当前 key 的套餐把「免缓存额度」模型填进 `kenari` 路由。
+  // 预设是静态 YAML，算不出套餐相关的东西，所以要在设置节挂上之后补一次
+  // （用户层已经自己写过 models 时一律不动，详见 src/default-route.ts）。
+  ctx.inject(['settings'], (settingsCtx) => {
+    void applyPlanDefaultRoute(settingsCtx, { http: deps, catalog, plans })
+  })
 
   // 第 5 期（可选）：自带 LlmAdapter。默认关闭，且路由名与 llm-pi-ai 预设不同，
   // 所以两条路可以并存、可以回退；开启后模型的 usage 与费用也进同一本账。

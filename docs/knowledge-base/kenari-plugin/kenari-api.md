@@ -612,3 +612,19 @@ Content-Type: application/json
 
 生成类（图像/视频/TTS）只在 `endpoints` 体现，理解类（看图/听音频/读 PDF）只在 `modalities.input` 体现，
 所以两处都要看。2026-09-11 实测分布：image 46、pdf 27、audio 19、video 22、embedding 4。
+
+## free cache 清单与套餐的实际取值（2026-09-11）
+
+`free_cache_models` 是"这些模型的缓存读取不占套餐额度"，实测五档（模型 id 都是**裸 id**）：
+
+| 套餐 | free cache 模型 |
+| --- | --- |
+| Indie | `deepseek-v4-flash`、`mimo-v2-5` |
+| Kreator | `deepseek-v4-flash`、`glm-5-3-flash`、`gpt-5-6-luna`、`mimo-v2-5` |
+| Studio | 同 Kreator（4 个） |
+| Agensi | 11 个：上面 4 个 + `deepseek-v4-pro`、`gemini-3-7-flash`、`gemini-3-8-flash`、`glm-5-3`、`grok-4-6`、`kimi-k3`、`minimax-m3` |
+| Enterprise | 12 个：同 Agensi + `gemini-3-6-flash` |
+
+`glm-5-3` 在 Agensi/Enterprise 的清单里，但公开目录当前没有这个 id（`glm-5-3-flash` 有），
+所以按清单生成模型列表时必须过一遍目录，查不到的丢掉——本插件就是这么做的
+（`src/default-route.ts`）。

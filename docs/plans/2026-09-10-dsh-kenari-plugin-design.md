@@ -540,7 +540,41 @@ computed style 只有 1 种；`套餐内` 原来的蓝色胶囊样式删除）�
 第五轮反馈：**已在路由的 `✓` 要与勾选框对齐**。原生 checkbox 自带浏览器 margin 与固有尺寸，
 而原来 `✓` 只是放在一个 `width: 13px` 的 span 里，两者对不上。抽出共用的 `PICK_BOX`
 （14×14、`margin: 0`、`boxSizing: border-box`、`flexShrink: 0`），勾选框直接用，`✓` 再加
-flex 居中；实测 48 个勾选框与 12 个 `✓` 的 x/宽/高/垂直中心偏移完全一致（x=0、14×14、offset 0）。
+flex 居中；实测同一面板里两种形式的 x / 宽 / 高 / 垂直中心偏移完全一致（x=0、14×14、offset 0）。
+
+### ✅ 默认路由按套餐决定（2026-09-11）
+
+用户要求：默认**不要**放 `:free` 模型；插件能查到当前 key 的套餐与该套餐的 `free_cache_models`，
+默认就把这些免缓存模型放进路由；查不到就用兜底清单（`deepseek-v4-flash` / `glm-5-3-flash` /
+`gpt-5-6-luna` / `mimo-v2-5`）。
+
+实现上的关键约束：`cordis.patch.yml` 是**静态 YAML**，算不出套餐相关的东西，所以拆成两层：
+
+- **静态兜底**：patch 预设改成那 4 个（正好等于 Kreator / Studio 两档的免缓存清单），
+  字段形状与 `catalog.ts` 的 `toModelProfile()` 一致，所以两条路径对同样的 id 产出同样的条目
+- **动态默认**：新增 `src/default-route.ts`，在 `settings` 节挂上后跑一次：
+  用户层已持有 `providers.kenari.models` → 不动；没有 key / quota 401 / `plan` 为 null → 不写；
+  拿到套餐名 → 从套餐表取 `free_cache_models` → 逐个过目录补全 profile（丢掉查不到的与非会话模型）→
+  **与预设同集合时不写**（否则每次启动都把同样的清单固化进 `settings.yaml`），不同才
+  `ctx.settings.mutate('llm-pi-ai', [set providers.kenari.models], revision)` 写一次
+
+写进去即成为用户层覆盖，下次启动第 1 步就返回 —— 一次性物化，不会反复改写，也永远不会覆盖
+用户自己改过的列表。
+
+**验证**（2026-09-11）：
+- `test/default-route.mjs`：真目录 + 真套餐表 + 真 `/v1/account/quota`（只读免费），
+  假设置服务录下写入决定。实测账户套餐 **Studio**，其免缓存清单与预设完全一致 →
+  **0 次写入**（正是期望：预设已经是对的，不该碰用户配置）；用户层持有 / 无 key / key 无效
+  三条路径均 0 次写入
+- `dsh --profile web --dump-config`：预设已换成那 4 个、`:free` 全部消失、同日另一条工作线的
+  `retryPolicy` 保持完好（同文件不同块，未受影响）
+- 服务实测：插件加载无报错，面板照常渲染（80/80、无 `data-slot-error`、行内无 `免费` 标签），
+  启动前后 `settings.yaml` 的 sha256 **逐字节不变**
+
+**注意（对既有安装的含义）**：pi-ai 的语义是"用户层写了数组就整份替换预设"，所以已经自己改过路由的
+账户看不到新默认值——需要在 Models 页点「重置模型目录」把数组交还预设，或者手动改成想要的清单。
+另外这 4 个都不是免费模型：**余额为 0 的新账户第一次会话会 402**，这是"默认不用免费模型"的代价，
+已在 README 写明。
 
 ## 5. 实施前需确认的未知项
 
