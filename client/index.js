@@ -110,18 +110,16 @@ window.__ModuleLoader__.load({
       chip: { padding: '2px 9px', borderRadius: '999px', border: '1px solid rgba(127,127,127,0.4)', background: 'transparent', color: 'inherit', font: 'inherit', fontSize: '12px', cursor: 'pointer' },
       chipOn: { padding: '2px 9px', borderRadius: '999px', border: '1px solid currentColor', background: 'rgba(127,127,127,0.18)', color: 'inherit', font: 'inherit', fontSize: '12px', cursor: 'pointer', fontWeight: 600 },
       search: { flex: '1 1 160px', minWidth: '120px', boxSizing: 'border-box', padding: '3px 8px', border: '1px solid rgba(127,127,127,0.4)', borderRadius: '6px', background: 'transparent', color: 'inherit', font: 'inherit' },
-      // Tags never shrink — a squeezed badge is unreadable. The row wraps
-      // instead, so a model with five capabilities and a subscription tag
-      // pushes its badges onto a second line and keeps every one at full width.
+      // Every tag renders through this one style — capabilities, 免费 and 套餐内
+      // alike — so a row reads as a set of equal facts rather than one badge
+      // shouting louder than the rest. They never shrink: a squeezed badge is
+      // unreadable, and the row wraps instead, keeping every tag at full width.
       capTag: { display: 'inline-block', flexShrink: 0, whiteSpace: 'nowrap', padding: '0 6px', borderRadius: '4px', border: '1px solid rgba(127,127,127,0.35)', fontSize: '11px', opacity: 0.85 },
-      planTag: { display: 'inline-block', flexShrink: 0, whiteSpace: 'nowrap', padding: '0 6px', borderRadius: '999px', background: 'rgba(46,134,222,0.16)', border: '1px solid rgba(46,134,222,0.45)', fontSize: '11px' },
       list: { maxHeight: '320px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '2px', border: '1px solid rgba(127,127,127,0.18)', borderRadius: '6px', padding: '6px 8px' },
-      // The id and its name travel as one unit so a wrapped row never splits
-      // them; the unit itself stays left-aligned at the head of the line.
+      // The id heads the line and never shrinks; the tags follow it and wrap
+      // as a group when the row runs out of width.
       item: { display: 'flex', flexWrap: 'wrap', gap: '2px 8px', alignItems: 'center', padding: '3px 0' },
-      identity: { display: 'flex', gap: '6px', alignItems: 'baseline', flexShrink: 0 },
-      itemId: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'nowrap' },
-      itemMeta: { opacity: 0.6, fontSize: '12px', whiteSpace: 'nowrap' },
+      itemId: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'nowrap', flexShrink: 0 },
       dim: { opacity: 0.45, fontSize: '12px', whiteSpace: 'nowrap', flexShrink: 0 },
       primary: { alignSelf: 'flex-start', padding: '4px 12px', borderRadius: '6px', border: '1px solid rgba(127,127,127,0.5)', background: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer' },
     }
@@ -419,18 +417,18 @@ window.__ModuleLoader__.load({
                   onChange: () => { togglePick(model.id) },
                 })
                 : React.createElement('span', { style: { width: '13px' } }, known[model.id] === true ? '✓' : ''),
-              React.createElement(
-                'span',
-                { style: styles.identity },
-                React.createElement('code', { style: styles.itemId }, model.id),
-                React.createElement('span', { style: styles.itemMeta }, model.name && model.name !== model.id ? model.name : ''),
-              ),
+              // The id alone: it is the exact string a request and the route
+              // entry use, and the vendor's display name beside it only made
+              // every row wider without adding anything a reader acts on. The
+              // name still travels in the payload (search matches it, and it
+              // is what gets written into the route's model entry).
+              React.createElement('code', { style: styles.itemId }, model.id),
               model.free === true ? React.createElement('span', { style: styles.capTag }, '免费') : null,
               (model.tags || []).map((tag) => React.createElement('span', { key: tag, style: styles.capTag }, tag)),
               // One boolean tag, never one badge per plan: the only question a
               // row answers is "does a subscription cover this PAID model", and
               // the tier that happens to cover it is not the reader's business.
-              planCovered(model) ? React.createElement('span', { style: styles.planTag }, '套餐内') : null,
+              planCovered(model) ? React.createElement('span', { style: styles.capTag }, '套餐内') : null,
               model.chatCapable === false ? React.createElement('span', { style: styles.dim }, '（非会话模型）') : null,
               known[model.id] === true ? React.createElement('span', { style: styles.dim }, '已在路由') : null,
             )),
