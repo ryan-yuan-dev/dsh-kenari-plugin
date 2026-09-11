@@ -83,11 +83,28 @@ check('maxTokens 不是单一常数（随窗口分档）', maxTokenValues.length
 // 目录自带 `name` 的那几个模型（Veo 3.1 Lite、MiniMax Speech 2.8 Turbo、Nano Banana Pro…）
 // 是 slug→展示名 规则的**标准答案**：把 name 抹掉再推一遍，必须与厂商写法逐字一致。
 // 这条比断言某个具体模型强：它验证的是规则本身，且目录换了模型也照样成立。
-const vendorNamed = view.models.filter((m) => m.name !== m.id)
-const derivedMatches = vendorNamed.filter((m) => displayNameOf({ id: m.id }) === m.name)
+//
+// 这里读的是**原始目录**而不是视图：视图的 `name` 现在已经是展示名了（见下一条），
+// 拿它当"厂商写法"会把这条断言变成自证。
+const rawModels = [...await catalog.list(), ...await catalog.list('embedding')]
+const rawNameById = new Map(rawModels.map((m) => [m.id, typeof m.name === 'string' ? m.name.trim() : '']))
+const vendorNamed = rawModels.filter((m) => (rawNameById.get(m.id) ?? '').length > 0)
+const derivedMatches = vendorNamed.filter((m) => displayNameOf({ id: m.id }) === rawNameById.get(m.id))
 check('slug→展示名 与目录自己的写法逐字一致',
   vendorNamed.length > 0 && derivedMatches.length === vendorNamed.length,
-  `${derivedMatches.length}/${vendorNamed.length} 个：${vendorNamed.map((m) => `${m.id}→${m.name}`).join('、') || '目录里没有带 name 的模型'}`)
+  `${derivedMatches.length}/${vendorNamed.length} 个：${vendorNamed.map((m) => `${m.id}→${rawNameById.get(m.id)}`).join('、') || '目录里没有带 name 的模型'}`)
+
+// 视图的 name 必须是展示名，而不是目录原样透传：后者对无名模型等于 id，界面把 id 印两遍。
+// 同一个模型的 profile.name 已经派生过，两者一致才算一个口径。
+check('视图的 name 与 profile.name 同口径（都是展示名）',
+  view.models.every((m) => m.name === m.profile.name))
+const unnamed = view.models.filter((m) => (rawNameById.get(m.id) ?? '') === '')
+check('目录没给 name 的模型拿到展示名而不是 id 复读',
+  unnamed.length > 0 && unnamed.every((m) => m.name.length > 0 && m.name !== m.id),
+  `${unnamed.length} 个无名模型，例如 ${unnamed[0] === undefined ? '—' : `${unnamed[0].id}→${unnamed[0].name}`}`)
+// 反过来说：目录自己给了 name 的，视图与 profile 都必须照抄厂商写法，不能被 id 还原覆盖掉。
+check('目录给了 name 的模型沿用厂商写法',
+  vendorNamed.every((m) => view.models.find((v) => v.id === m.id)?.name === rawNameById.get(m.id)))
 check('没有重复模型 id', new Set(view.models.map((m) => m.id)).size === view.models.length)
 
 // 最后一道关：把**全部** profile 一次性交给真实的 llm-pi-ai Config schema 校验。

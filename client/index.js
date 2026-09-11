@@ -113,8 +113,10 @@ window.__ModuleLoader__.load({
         'models.noRoute': '没有可用的 Kenari 模型路由（{failures}）',
         'ui.expand': '展开',
         'ui.collapse': '收起',
-        'models.hint': '这里列出当前路由可用的模型。价格与完整目录（含向量、重排等非会话模型）用 kenari_list_models 查看。',
-        'models.context': '上下文 {size}',
+        'models.hint': '这里列出当前路由可用的模型。价格和完整目录（含向量、重排这类非会话模型）要看的话，在对话里问一句就行，比如「列出 Kenari 的模型和价格」。',
+        'models.colId': '模型 ID',
+        'models.colName': '显示名称',
+        'models.colContext': '上下文',
 
         'sessionTitle.title': '会话标题',
         'sessionTitle.prefix': '新会话标题加时间前缀',
@@ -234,8 +236,10 @@ window.__ModuleLoader__.load({
         'models.noRoute': 'No usable Kenari model route ({failures})',
         'ui.expand': 'Show',
         'ui.collapse': 'Hide',
-        'models.hint': 'These are the models this route can use right now. Use kenari_list_models for pricing and the full catalog, including embedding and rerank models.',
-        'models.context': '{size} context',
+        'models.hint': 'These are the models this route can use right now. To see pricing and the full catalog — including embedding and rerank models — ask in the chat, for example "list the Kenari models and their prices".',
+        'models.colId': 'Model ID',
+        'models.colName': 'Display name',
+        'models.colContext': 'Context',
 
         'sessionTitle.title': 'Session titles',
         'sessionTitle.prefix': 'Prefix new session titles with the time',
@@ -1464,6 +1468,31 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Rows carrying a name a reader can use, given the catalog's display names.
+     *
+     * The discovery listing is not a source of names: dsh fills `name` with the
+     * raw id when the endpoint publishes none (`llm-pi-ai/src/discovery.ts`), and
+     * Kenari publishes a name for only 8 of its 80-odd models. So a row printed
+     * the id twice — once as the id, once as the name — and the second copy said
+     * nothing the first had not. The plugin's own view derives a display name for
+     * every model (`Agnes 2.0 Flash`), which is also the string written into the
+     * route profile, so the list reads it from there.
+     *
+     * When nothing resolves and the listing's name is just the id, the cell is
+     * left empty rather than reprinting it: the id column already carries it.
+     */
+    function withDisplayNames(models, names) {
+      return models.map((model) => {
+        const resolved = names[model.id]
+        if (typeof resolved === 'string' && resolved.length > 0 && resolved !== model.id) {
+          return { ...model, name: resolved }
+        }
+        const listed = typeof model.name === 'string' ? model.name : ''
+        return { ...model, name: listed === model.id ? '' : listed }
+      })
+    }
+
+    /**
      * The models the current route can use.
      *
      * The provider reports its whole catalog — dozens of rows — and a reader who
@@ -1504,6 +1533,20 @@ window.__ModuleLoader__.load({
         React.createElement(
           'table',
           { style: styles.table },
+          // Headed, unlike the usage table's first version: three unlabelled
+          // columns where two of them printed the same string left the reader to
+          // guess which was which. dsh's own vocabulary names them.
+          React.createElement(
+            'thead',
+            null,
+            React.createElement(
+              'tr',
+              null,
+              React.createElement('th', { style: { ...styles.cell, ...styles.th } }, t('models.colId')),
+              React.createElement('th', { style: { ...styles.cell, ...styles.th } }, t('models.colName')),
+              React.createElement('th', { style: { ...styles.cell, ...styles.th } }, t('models.colContext')),
+            ),
+          ),
           React.createElement(
             'tbody',
             null,
@@ -1514,7 +1557,9 @@ window.__ModuleLoader__.load({
                 { key: model.id },
                 React.createElement('td', { style: styles.cell }, React.createElement('code', { style: styles.mono }, model.id)),
                 React.createElement('td', { style: styles.cell }, model.name || ''),
-                React.createElement('td', { style: { ...styles.cell, whiteSpace: 'nowrap', opacity: 0.7 } }, context === undefined ? '' : t('models.context', { size: context })),
+                // The header carries the word, so the cell carries only the
+                // magnitude: "Context window | 872K", not "Context window | 872K context".
+                React.createElement('td', { style: { ...styles.cell, whiteSpace: 'nowrap', opacity: 0.7 } }, context === undefined ? '' : context),
               )
             }),
           ),
@@ -1734,11 +1779,32 @@ window.__ModuleLoader__.load({
       t = ctx.locale.bind(NS)
 
       /**
+       * The catalog's display names, keyed by id, read from this plugin's own
+       * same-origin view. Best-effort on purpose: a name is a nicety and the id
+       * is the fact, so a view that will not load must not take the list with it.
+       */
+      const displayNames = async () => {
+        try {
+          const view = await loadModelView()
+          const names = {}
+          for (const model of view.models || []) {
+            if (typeof model.id === 'string' && typeof model.name === 'string') names[model.id] = model.name
+          }
+          return names
+        } catch {
+          return {}
+        }
+      }
+
+      /**
        * Model discovery is per owning settings namespace, and a route pi-ai does
        * not ship also needs the endpoint to ask: `llm-pi-ai` owns the shipped
        * preset route, while the plugin's own adapter (phase 5) owns its route
        * under this plugin's namespace. Try the shipped route first so the card
        * works out of the box, then the native one.
+       *
+       * The listing carries no usable names (see `withDisplayNames`), so the
+       * rows are joined with this plugin's own view before they are returned.
        */
       const loadModels = async () => {
         const settings = scope.getSnapshot().value || {}
@@ -1755,7 +1821,7 @@ window.__ModuleLoader__.load({
         for (const candidate of candidates) {
           const result = await ctx.remote.llm.discoverModels(candidate.ns, candidate.request)
           if (result.ok && result.value.length > 0) {
-            return { route: candidate.request.provider, models: result.value }
+            return { route: candidate.request.provider, models: withDisplayNames(result.value, await displayNames()) }
           }
           failures.push(`${candidate.request.provider}: ${result.ok ? t('models.routeEmpty') : result.error.code}`)
         }
@@ -1913,6 +1979,7 @@ window.__ModuleLoader__.load({
       TOOL_ONLY_FACTS,
       MODEL_PREVIEW_COUNT,
       visibleModels,
+      withDisplayNames,
       formatContextWindow,
       tagLabel,
       Disclosure,

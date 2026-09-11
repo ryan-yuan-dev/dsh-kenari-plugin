@@ -666,7 +666,10 @@ try {
   }
   // The usage block's own heading and column heads are rendered inline rather
   // than through a spec, so they are listed here.
-  specKeys.push('usage.title', 'usage.hint', 'usage.what', 'usage.ask')
+  specKeys.push(
+    'usage.title', 'usage.hint', 'usage.what', 'usage.ask',
+    'models.title', 'models.summary', 'models.hint', 'models.colId', 'models.colName', 'models.colContext',
+  )
   for (const fact of internals.TOOL_ONLY_FACTS) specKeys.push(fact.what, fact.ask)
   const unresolved = specKeys.filter((key) =>
     !Object.prototype.hasOwnProperty.call(internals.LOCALES.zh, key)
@@ -676,6 +679,18 @@ try {
     unresolved.length === 0,
     unresolved.length === 0 ? `${String(specKeys.length)} keys` : unresolved.join(', '),
   )
+  // This copy is written for someone who cannot call a tool. `kenari_list_models`
+  // is an identifier they would have to look up, and one leaked into the model
+  // list's hint precisely because it was accurate to the implementation.
+  {
+    const jargon = []
+    for (const locale of ['zh', 'en']) {
+      for (const [key, text] of Object.entries(internals.LOCALES[locale])) {
+        if (/kenari_[a-z_]+/.test(text)) jargon.push(`${locale}:${key}`)
+      }
+    }
+    check('no user-facing copy names a tool identifier', jargon.length === 0, jargon.join(', '))
+  }
   // The nav label is a thunk for a reason: the shell re-reads it per locale.
   check(
     'the nav label follows the active locale instead of being frozen at registration',
@@ -737,6 +752,44 @@ try {
     && internals.formatContextWindow(0) === undefined,
     `${String(internals.formatContextWindow(1048576))} / ${String(internals.formatContextWindow(872000))}`,
   )
+  // dsh's discovery fills `name` with the id when the endpoint publishes no name,
+  // so the row printed the id twice. Every case below is a real shape it returns.
+  {
+    const listed = [
+      { id: 'agnes-2-0-flash:free', name: 'agnes-2-0-flash:free' },
+      { id: 'glm-5-3-flash', name: 'GLM 5.3 Flash' },
+      { id: 'unknown-model', name: 'unknown-model' },
+      { id: 'no-name-field' },
+    ]
+    const named = internals.withDisplayNames(listed, { 'agnes-2-0-flash:free': 'Agnes 2.0 Flash', 'glm-5-3-flash': 'GLM 5.3 Flash' })
+    check(
+      'a listed name that is just the id is replaced by the catalog display name',
+      named[0].name === 'Agnes 2.0 Flash'
+      && named[1].name === 'GLM 5.3 Flash',
+      JSON.stringify(named.map((m) => `${m.id}→${m.name}`)),
+    )
+    check(
+      'without a resolved name the id is not printed twice',
+      named[2].name === '' && named[3].name === '',
+      JSON.stringify(named.slice(2).map((m) => `${m.id}→${m.name}`)),
+    )
+    check(
+      'a catalog name equal to the id is treated as no name',
+      internals.withDisplayNames([{ id: 'x', name: 'x' }], { x: 'x' })[0].name === '',
+    )
+    check('the join does not mutate the rows it is given', listed[0].name === 'agnes-2-0-flash:free')
+  }
+  {
+    // Three columns, three different words: the id column and the name column
+    // were indistinguishable while both printed the same string.
+    const heads = ['models.colId', 'models.colName', 'models.colContext'].map((key) => internals.LOCALES.zh[key])
+    check(
+      'the model table carries three distinct column labels',
+      new Set(heads).size === 3 && heads.every((head) => typeof head === 'string' && head.length > 0)
+      && internals.LOCALES.en['models.colName'] === 'Display name',
+      heads.join(' | '),
+    )
+  }
   check(
     'a capability id with no translation of its own prints as itself',
     internals.tagLabel('image') === internals.LOCALES.zh['tag.image']

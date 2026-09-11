@@ -15,7 +15,7 @@ import type { Context } from '@deepseek-ai/cordis'
 // Type-only: 拉入 ctx.connection 的 Context 声明合并（Fetch 路由注册点的宿主）
 import type {} from '@deepseek-ai/dsh-client-connection'
 import {
-  CAPABILITY_TAGS, capabilityTagsOf, isChatCapable, isFreeModel, toModelProfile,
+  CAPABILITY_TAGS, capabilityTagsOf, displayNameOf, isChatCapable, isFreeModel, toModelProfile,
 } from './catalog.js'
 import type { CapabilityTag, KenariCatalog, KenariModel } from './catalog.js'
 import { coverageOf } from './plans.js'
@@ -35,6 +35,13 @@ export interface CatalogViewDeps {
 /** 一个模型的浏览器视图：目录事实 + 派生标签 + 可直接写入路由的 profile。 */
 interface ModelView {
   id: string
+  /**
+   * 展示名，**不是**目录原样给的 `name`。
+   *
+   * 目录里只有 8 个模型带 `name`，其余 70 多个要按 id 还原（见 `displayNameOf`）。
+   * 若这里原样透传，无名模型的 `name` 就等于 id，界面把 id 印两遍；而同一个模型的
+   * `profile.name` 又已经是派生名——同一份数据里两个口径，改这里就是为了消掉它。
+   */
   name: string
   ownedBy?: string
   contextWindow?: number
@@ -64,7 +71,7 @@ function toView(model: KenariModel, coverage: Map<string, { plans: string[]; fre
   const covered = coverageOf(coverage, model.id)
   return {
     id: model.id,
-    name: model.name ?? model.id,
+    name: displayNameOf(model),
     ...(model.owned_by === undefined ? {} : { ownedBy: model.owned_by }),
     ...(typeof model.context_length === 'number' ? { contextWindow: model.context_length } : {}),
     free: isFreeModel(model),
