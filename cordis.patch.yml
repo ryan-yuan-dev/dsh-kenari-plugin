@@ -49,6 +49,11 @@
 #
 # Only free models are preset: a fresh Rp 0 account gets a working agent with no
 # billing risk, and paid models are one Models-page entry away.
+#
+# Failure recovery: `retryPolicy` below must stay in sync with the plugin's
+# `modelRetryMaxRetries` / `modelRetryDelayMs` (which drive the kenari-direct
+# route). dsh captures a route's retry policy once, at adapter registration, and
+# freezes it — so the plugin cannot change this route's retry timing at runtime.
 # ---------------------------------------------------------------------------
 - id: llm-pi-ai
   config:
@@ -58,6 +63,19 @@
         apiKeyEnv: KENARI_API_KEY
         api: openai-completions
         baseURL: https://kenari.id/v1
+        # A flat 5s between retries: dsh's backoff is `initialDelay * 2^n` capped
+        # at `maxDelay`, so making the two equal (and disabling jitter) is the
+        # only way to express "wait 5s every time".
+        # CONTEXT_WINDOW_EXCEEDED is deliberately left out of the retryable set:
+        # retrying the same context on the same model can only fail again, and
+        # the plugin's escalation is the thing that can actually fix it.
+        retryPolicy:
+          mode: normal
+          maxRetries: 5
+          backoff:
+            initialDelayMs: 5000
+            maxDelayMs: 5000
+            jitterRatio: 0
         compat:
           supportsDeveloperRole: false
           maxTokensField: max_tokens
