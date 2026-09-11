@@ -1,5 +1,7 @@
 # dsh-kenari-plugin
 
+[![npm version](https://img.shields.io/npm/v/dsh-kenari-plugin.svg)](https://www.npmjs.com/package/dsh-kenari-plugin)
+
 English | [中文](README.md)
 
 Connects [Kenari](https://kenari.id) to the DeepSeek Harness (dsh):
@@ -22,13 +24,15 @@ dsh plugin --profile web add @deepseek-ai/dsh-web-fetch-http@0.1.5-rc.1
 
 ## Install
 
+The plugin is published on [npmjs](https://www.npmjs.com/package/dsh-kenari-plugin). Install it with dsh's own plugin command:
+
 ```sh
 dsh plugin --profile web add dsh-kenari-plugin
 dsh --profile web --dump-config | grep -A3 dsh-kenari-plugin   # confirm the patch layer applied
 dsh --profile web
 ```
 
-To work on the plugin source, install from a clone instead: `pnpm install && pnpm build`, then `dsh plugin --profile web add "$PWD"`. The profile links to that directory, so after installing you only rerun `pnpm build` for source changes.
+To pin a version, append it to the name, for example `dsh-kenari-plugin@0.1.1`. To work on the plugin source, install from a clone instead: `pnpm install && pnpm build`, then `dsh plugin --profile web add "$PWD"`. The profile links to that directory, so after installing you only rerun `pnpm build` for source changes.
 
 ## Set up your key
 

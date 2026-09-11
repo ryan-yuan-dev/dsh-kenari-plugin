@@ -1,5 +1,7 @@
 # dsh-kenari-plugin
 
+[![npm version](https://img.shields.io/npm/v/dsh-kenari-plugin.svg)](https://www.npmjs.com/package/dsh-kenari-plugin)
+
 [English](README.en.md) | 中文
 
 把 [Kenari](https://kenari.id) 接进 DeepSeek Harness（dsh）：
@@ -22,13 +24,15 @@ dsh plugin --profile web add @deepseek-ai/dsh-web-fetch-http@0.1.5-rc.1
 
 ## 安装
 
+插件已发布到 [npmjs](https://www.npmjs.com/package/dsh-kenari-plugin)，用 dsh 自己的插件命令装：
+
 ```sh
 dsh plugin --profile web add dsh-kenari-plugin
 dsh --profile web --dump-config | grep -A3 dsh-kenari-plugin   # 确认 patch 层生效
 dsh --profile web
 ```
 
-改插件源码时换成 clone 安装：`pnpm install && pnpm build`，再 `dsh plugin --profile web add "$PWD"`。profile 里是 pnpm link，之后改源码只需重新 `pnpm build`。
+要固定版本就在包名后加，例如 `dsh-kenari-plugin@0.1.1`。改插件源码时换成 clone 安装：`pnpm install && pnpm build`，再 `dsh plugin --profile web add "$PWD"`，之后改源码只需重新 `pnpm build`。
 
 ## 配置密钥
 
