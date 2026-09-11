@@ -440,12 +440,15 @@ slot 的 `SlotErrorBoundary` 捕获异常后渲染 `<div data-slot-error="<slotK
   settingsNs 的行都会派发**（含手写路由），所以组件必须自己按 `provider.provider` 收窄
 - 挂载位置是**行卡片内部**（在 `编辑` 展开的编辑器之前），不是弹窗里
 
-### 「获取可用模型」对话框**不可扩展**
+### 「获取可用模型」对话框**内部不可扩展**（入口可以接管）
 
 `ModelListEditor`（`ui-settings-models`）里的候选列表只渲染 `candidate.id`，而 `LlmDiscoveredModel`
 只有 `{ id, name?, contextWindow?, maxTokens? }`（`packages/llm/llm/src/types.ts:289`）。
 能力/价格/套餐这类字段**既传不进去也显示不出来**，且没有任何 slot 落在弹窗内。
-要在这类弹窗里加东西 = 改 dsh，红线禁止。
+要在这个弹窗**里面**加字段 = 改 dsh，红线禁止。
+
+但**入口**可以接管 —— 见下面的「接管宿主按钮的入口（第 7 期实战）」。前提是那个按钮确实在
+插件能触到的 DOM 里，且插件有自己的对话框可以顶上。
 
 ### 客户端**加不了** Remote 命名空间
 
@@ -480,3 +483,38 @@ slot 的 `SlotErrorBoundary` 捕获异常后渲染 `<div data-slot-error="<slotK
 
 `reasoning_options` 里的 `none` 不是 dsh 的档位键（`off|minimal|low|medium|high|xhigh|max`），
 映射必须是 `off: 'none'`（键 dsh、值线上）；写错键整节 schema 校验失败、写入被拒。
+
+### 浏览器基线的真实清单：`react-dom` 与 UI primitives 都在表里（第 7 期实测）
+
+- `PLATFORM_MODULES`（`packages/client/web/src/platform.ts`）= `react`、`react/jsx-runtime`、
+  `react-dom`、`react-dom/client`、`@deepseek-ai/cordis`、`@deepseek-ai/dsh-client-store`、
+  `@deepseek-ai/dsh-client-ui-slots`、`@deepseek-ai/dsh-client-ui-primitives`、
+  `@deepseek-ai/dsh-client-ui-dockkit`
+- 这张表就是浏览器 `require` 解析 external 的**隐式基线**：基线内的模块**不需要**写进
+  `dsh.client.external`；只有基线之外的精确请求才要声明，且必须由某个动态包 row 或静态表键回答
+- 在**安装版** 0.1.5-rc.1 上逐字核对过：shell bundle（`dsh-web-frontend/dist/assets/index-*.js`）
+  的种子表对象确实以这 9 个键建表；`@deepseek-ai/dsh-client-ui-primitives` 的导出面确实含
+  `Modal` / `Button` / `Pill` / `Tag` / `Input` / `Switch` / `Tooltip` 等（dsh 自己的
+  `ui-settings-models/lib/client.js` 就从它取 `Modal`、`Button`）
+- 因此插件 bundle 可以直接用 dsh 的对话框原子：`Modal` 自己 portal 到 `body`，自带 Escape 与遮罩关闭、
+  `role="dialog"` + `aria-label`（= title）、`footer` 槽——做出**同款**界面而不是仿制品；`Tag`
+  的 `tone` 里 `outline` 是只读默认样式
+- `Input` 原子的宽度由它自己的 CSS module 决定（`.wrap` 是 `inline-flex`、没有宽度），插件只能传
+  className 传不了 style；需要受控宽度（例如 `flex: 1` 的搜索框）时用裸 `<input>` + `--dsw-*` token 更省事
+
+### 接管宿主按钮的入口（第 7 期实战）
+
+- **DOM 关系是前提**：`settings.models.provider-card` 的派发点与 `renderProviderEditor(...)` 是
+  **同一个 `<li>` 卡片内的兄弟节点**（`ModelsSection` 的三处 `renderSlot(...)` 实测），所以插件留一个
+  隐藏标记（如 `data-kenari-model-picker`）就能判断"这个按钮属于我关心的那张卡"
+- **捕获阶段能抢在 React 前面**：React 18 把监听挂在根容器上，`document` 上的**捕获**监听先跑，
+  `stopPropagation()` 之后根容器收不到，dsh 自己的 onClick 不会执行
+- **按钮的身份只有文本可用**：class 是 CSS module 哈希，兄弟位置随"重置模型目录"链接是否渲染而变；
+  所以按 dsh 自己的标签匹配（`获取可用模型` / `Fetch available models`，双语都写上）
+- **必须 fail-open**：`preventDefault` 之前排除四种情况——没有监听者（本卡未挂载）、按钮不在带标记的
+  卡片内（别的 provider 的同名按钮）、点击来自插件自己的弹窗（portal 到 `body`，往上找不到标记）、
+  插件自己重放的那次点击（一个 bypass 标志）
+- 需要"退回原生"时：置 bypass → 对原按钮调 `.click()` → 下一个 tick 复位。注意 disabled 的按钮
+  不派发 click，这条回退只对可点的原生按钮有效
+- **写盘语义要自己扛**：插件的弹窗够不到编辑器的 draft，只能即时 `settings.mutate`；副作用是编辑器
+  那份列表在重新展开前是旧的（dsh 自己的「重置模型目录」在编辑器开着时同样如此，不是插件引入的异常）

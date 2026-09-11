@@ -6,7 +6,13 @@
  * module the loader's baseline table cannot answer — all of which fail in the
  * browser instead of the build. This executes the file the same way the loader
  * does: it captures the `window.__ModuleLoader__.load` registration, runs the
- * factory with a stub React, and asserts the resulting module face.
+ * factory against a stub module table, and asserts the resulting module face.
+ *
+ * It also drives the logic that would otherwise only be exercised by hand in a
+ * browser: the filter/plan join behind the picker, and the DOM guard behind the
+ * 获取可用模型 takeover. Both are silent when wrong — a filter that drops the
+ * wrong row still renders, and a takeover that matches the wrong button still
+ * looks like it worked.
  *
  * Run: node scripts/check-client.mjs
  */
@@ -27,7 +33,10 @@ const check = (name, ok, detail = '') => {
 
 // 1) The loader's baseline module table, as this bundle may use it. Keep in step
 //    with dsh's PLATFORM_MODULES; anything else must be declared in dsh.client.external.
-const BASELINE = new Set(['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client'])
+const BASELINE = new Set([
+  'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client',
+  '@deepseek-ai/dsh-client-ui-primitives',
+])
 const declaredExternals = new Set(pkg.dsh?.client?.external ?? [])
 const requested = []
 
@@ -39,6 +48,17 @@ const sandbox = {
         registration = record
       },
     },
+  },
+  // The takeover installs one capture-phase listener on the document, so `apply`
+  // needs a document in scope; nothing here dispatches a real click.
+  document: {
+    body: null,
+    addEventListener() {},
+    removeEventListener() {},
+  },
+  setTimeout: (fn) => {
+    fn()
+    return 0
   },
   console,
   Symbol,
@@ -75,11 +95,12 @@ try {
   exports = registration.factory((specifier) => {
     requested.push(specifier)
     if (specifier === 'react') return stubReact()
+    if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return stubPrimitives()
     if (BASELINE.has(specifier) || declaredExternals.has(specifier)) return {}
     throw new Error(`undeclared module request "${specifier}"`)
   })
 } catch (err) {
-  check('factory runs against a stub React', false, String(err))
+  check('factory runs against a stub module table', false, String(err))
   process.exit(1)
 }
 
@@ -101,7 +122,43 @@ function stubReact() {
   }
 }
 
-check('factory runs against a stub React', true)
+/**
+ * dsh's UI primitives, as the bundle uses them. `Modal` renders its children
+ * regardless of `open` so one render pass reaches the dialog body — the point is
+ * to execute that body, not to reproduce modal behavior.
+ */
+function stubPrimitives() {
+  const React = stubReact()
+  const passthrough = (name) => (props) => React.createElement(name, props, props?.children)
+  return {
+    Modal: (props) => React.createElement('modal', { title: props.title, onClose: props.onClose }, [props.footer ?? null, props.children ?? null]),
+    Button: passthrough('button'),
+    Pill: passthrough('pill'),
+    Tag: passthrough('tag'),
+  }
+}
+
+/** Every element in a stub element tree, depth-first. */
+function walk(node, visit) {
+  if (node === null || node === undefined || typeof node !== 'object') return
+  if (Array.isArray(node)) {
+    for (const child of node) walk(child, visit)
+    return
+  }
+  visit(node)
+  walk(node.props?.children, visit)
+}
+
+/** Whether a stub element tree contains an element satisfying `predicate`. */
+function contains(node, predicate) {
+  let found = false
+  walk(node, (element) => {
+    if (predicate(element)) found = true
+  })
+  return found
+}
+
+check('factory runs against a stub module table', true)
 check('bundle exports apply/inject/NS', typeof exports.apply === 'function' && Array.isArray(exports.inject) && typeof exports.NS === 'string')
 
 // A typo in a service name means the bundle never activates; the browser would
@@ -124,10 +181,105 @@ const hostSource = readFileSync(join(root, 'src/settings.ts'), 'utf8')
 const hostNs = /KENARI_SETTINGS_NAMESPACE = '([^']+)'/.exec(hostSource)?.[1]
 check('client NS matches the Host settings namespace', hostNs === exports.NS, `host=${hostNs} client=${exports.NS}`)
 
+// ---------------------------------------------------------------------------
+// The picker's logic, with a catalog view shaped like the Host's response.
+// ---------------------------------------------------------------------------
+const internals = exports.__internals
+check('bundle exports the pure internals the gate drives', internals !== undefined && typeof internals === 'object')
+if (internals === undefined) {
+  console.error('\nclient bundle check failed:\n  __internals missing')
+  process.exit(1)
+}
+
+const VIEW = {
+  tags: ['image', 'audio', 'video', 'pdf', 'embedding'],
+  models: [
+    { id: 'alpha:free', free: true, tags: ['image'], chatCapable: true, profile: { id: 'alpha:free' } },
+    { id: 'beta', free: false, tags: ['image', 'pdf'], plans: ['studio'], chatCapable: true, profile: { id: 'beta' } },
+    { id: 'gamma', free: false, tags: [], chatCapable: false, profile: { id: 'gamma' } },
+  ],
+  plans: ['studio'],
+}
+const ROUTE = { modelIds: ['alpha:free'], writable: true }
+const ids = (models) => models.map((model) => model.id).join(',')
+
+check(
+  'a free model is never 套餐内',
+  internals.planCovered(VIEW.models[0]) === false && internals.planCovered(VIEW.models[1]) === true,
+)
+check(
+  'no filter shows the whole catalog and marks the route entry known',
+  ids(internals.derivePanel(VIEW, ROUTE, '', {}, []).visible) === 'alpha:free,beta,gamma'
+  && internals.derivePanel(VIEW, ROUTE, '', {}, []).known['alpha:free'] === true,
+)
+check(
+  'the 套餐内 filter keeps plan-covered paid models only',
+  ids(internals.derivePanel(VIEW, ROUTE, '', { plan: true }, []).visible) === 'beta',
+)
+check(
+  'the 免费 filter reads the payload flag, not the id suffix',
+  ids(internals.derivePanel(VIEW, ROUTE, '', { free: true }, []).visible) === 'alpha:free',
+)
+check(
+  'capability filters are ANDed',
+  ids(internals.derivePanel(VIEW, ROUTE, '', { image: true, pdf: true }, []).visible) === 'beta',
+)
+check(
+  'search is case-insensitive over id and name',
+  ids(internals.derivePanel(VIEW, ROUTE, 'BET', {}, []).visible) === 'beta',
+)
+check(
+  'a model already in the route is never offered for adding',
+  ids(internals.derivePanel(VIEW, ROUTE, '', {}, ['alpha:free', 'beta']).addable) === 'beta',
+)
+check(
+  'all-visible-picked drives the select-all label',
+  internals.derivePanel(VIEW, ROUTE, '', {}, ['alpha:free', 'beta', 'gamma']).allVisiblePicked === true
+  && internals.derivePanel(VIEW, ROUTE, '', {}, ['beta']).allVisiblePicked === false,
+)
+check(
+  'the user layer replaces the shipped model array; otherwise the base layer answers',
+  ids(internals.routeModelsOf({ user: { providers: { k: { models: [{ id: 'u' }] } } }, base: { providers: { k: { models: [{ id: 'b' }] } } } }, 'k')) === 'u'
+  && ids(internals.routeModelsOf({ user: {}, base: { providers: { k: { models: [{ id: 'b' }] } } } }, 'k')) === 'b'
+  && internals.routeModelsOf(undefined, 'k').length === 0,
+)
+check(
+  'pathGet answers undefined instead of inventing a default',
+  internals.pathGet({ a: { b: 1 } }, ['a', 'b']) === 1 && internals.pathGet({}, ['a', 'b']) === undefined,
+)
+check(
+  'the takeover matches the Kenari card and only the Kenari card',
+  'data-kenari-model-picker' === internals.MARKER_ATTR
+  && internals.FETCH_LABELS.includes('获取可用模型')
+  && internals.FETCH_LABELS.includes('Fetch available models'),
+)
+
+// cardWithMarker walks from a button up to the first ancestor holding the
+// marker. The negative case is the one that matters: another provider's card
+// must not be claimed, because the native dialog is that card's only picker.
+{
+  const body = { querySelector: () => null, parentElement: null, ownerDocument: null }
+  const doc = { body }
+  const kenariCard = {
+    querySelector: (selector) => (selector === `[${internals.MARKER_ATTR}]` ? {} : null),
+    parentElement: body,
+    ownerDocument: doc,
+  }
+  const kenariEditor = { querySelector: () => null, parentElement: kenariCard, ownerDocument: doc }
+  const kenariButton = { parentElement: kenariEditor, ownerDocument: doc }
+  const otherEditor = { querySelector: () => null, parentElement: body, ownerDocument: doc }
+  const otherButton = { parentElement: otherEditor, ownerDocument: doc }
+  check(
+    'the takeover claims a button inside the marked card only',
+    internals.cardWithMarker(kenariButton) === kenariCard && internals.cardWithMarker(otherButton) === null,
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Render every registered slot once against fake services. Catches what the
 // browser would otherwise show as an empty panel: a ReferenceError, a bad prop
-// access, or a component that returns nothing. Both registrations are exercised
-// because both render bodies are hand-written.
+// access, or a component that returns nothing.
+// ---------------------------------------------------------------------------
 try {
   const registered = []
   const snapshot = {
@@ -142,13 +294,14 @@ try {
     base: {}, user: { baseURL: 'https://kenari.id/v1' }, revision: 1, writable: true, mode: 'host',
   }
   // The pi-ai namespace as `settings.describe()` reports it: the composition
-  // layer owns the preset models, which is what the panel appends to.
+  // layer owns the preset models, which is what the picker appends to.
   const piAiView = {
     ns: 'llm-pi-ai', schema: {}, revision: 7, applies: true, secrets: [],
     value: { providers: { kenari: { models: [{ id: 'step-3-7-flash:free' }] } } },
     base: { providers: { kenari: { models: [{ id: 'step-3-7-flash:free' }] } } },
   }
   const ctx = {
+    effect: (callback) => callback(),
     settingsScope: {
       bind: () => ({ getSnapshot: () => snapshot, subscribe: () => () => {}, set: async () => {}, mutate: async () => {}, unset: async () => {} }),
     },
@@ -175,11 +328,26 @@ try {
   check('apply registers the models provider-card seat', card !== undefined && card.options.key === 'llm-pi-ai',
     card === undefined ? 'missing' : `key=${card.options.key}`)
   const cardFace = card.options.inject()
-  // Both faces: the Kenari row renders the panel, another pi-ai route renders nothing.
+  // Both faces: the Kenari row renders the takeover anchor, another pi-ai route
+  // renders nothing — not even the marker, or the takeover would claim that
+  // route's button.
   const kenariRow = card.component({ provider: { provider: 'kenari', settingsNs: 'llm-pi-ai' }, configured: true, keyConfigured: true, ...cardFace })
-  check('provider-card panel renders for the kenari route', kenariRow !== undefined && kenariRow !== null)
+  check('the kenari card renders the takeover anchor', contains(kenariRow, (el) => el.props?.[internals.MARKER_ATTR] === 'kenari'))
   const otherRow = card.component({ provider: { provider: 'acme-gateway', settingsNs: 'llm-pi-ai' }, configured: true, keyConfigured: false, ...cardFace })
-  check('provider-card panel renders nothing for another pi-ai route', otherRow === null)
+  check('another pi-ai route renders no anchor', otherRow === null)
+
+  // The dialog body itself, rendered directly because the anchor only mounts it
+  // on a click the gate cannot dispatch. This is the one pass that would catch a
+  // bad tag/pill prop in the picker's own tree.
+  const modal = internals.ModelCatalogModal({ allowAdd: true, onClose: () => {}, nativeButton: undefined, ...cardFace })
+  const footer = modal?.props?.footer
+  check(
+    'the picker dialog renders its chrome, body, and footer',
+    modal?.props?.title === '选择要添加的模型'
+    && modal?.props?.closeLabel === '关闭'
+    && modal?.props?.children?.props?.children === '正在读取模型目录…'
+    && Array.isArray(footer?.props?.children) && footer.props.children.length === 3,
+  )
 } catch (err) {
   check('slots render without throwing', false, String(err && err.stack ? err.stack.split('\n')[0] : err))
 }

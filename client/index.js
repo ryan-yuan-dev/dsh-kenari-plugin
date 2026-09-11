@@ -6,13 +6,14 @@
  * with plain `tsc`, and the loader only requires that
  * `exports["./client"]` be a file that calls `window.__ModuleLoader__.load`.
  * `scripts/check-client.mjs` runs on every build and executes this factory
- * against a stub React, so a change that breaks the format or reaches for an
- * undeclared module fails the build rather than the browser.
+ * against a stub module table, so a change that breaks the format, the module
+ * requests, or a render path fails the build rather than the browser.
  *
- * Only `react` (a `PLATFORM_MODULES` baseline module) is required at runtime.
- * Everything the card shows comes from services on the client context:
- * `settingsScope` (this plugin's own settings namespace) and `remote.llm`
- * (adapter-discovered models).
+ * Modules come from dsh's frozen platform table only: `react` plus
+ * `@deepseek-ai/dsh-client-ui-primitives` (the shell seeds both, so neither
+ * needs a `dsh.client.external` declaration). Using dsh's own primitives is
+ * what lets the picker below BE the Models page's dialog — same Modal chrome,
+ * same Button/Pill/Tag tokens — rather than a look-alike beside it.
  *
  * What deliberately is NOT here: wallet balance, spend totals, and live
  * catalog prices. Those live behind the Host on endpoints with no Remote
@@ -21,15 +22,20 @@
  * at the tools that do have them (`kenari_billing`, `kenari_balance`,
  * `kenari_list_models`) instead of showing a number it cannot refresh.
  *
- * The model browser area (`settings.models.provider-card`) is the one place
- * that does read Host-computed data, and it does so through the plugin's own
- * same-origin Fetch route rather than a Remote namespace: dsh's Connection
- * service lets a Host plugin register `/api/...` routes, so the browser reads
- * `/api/kenari.models` with the same session that already authenticates the
- * Remote calls. Capability tags, plan coverage, and every filter are computed
- * Host-side from the public catalog and the plan table — the browser never
- * parses Kenari's payloads itself, so the tags here and `kenari_list_models`
- * can never disagree.
+ * The catalog itself (capability tags, plan coverage, every filter's facts)
+ * is computed Host-side and read through the plugin's own same-origin Fetch
+ * route: dsh's Connection service lets a Host plugin register `/api/...`
+ * routes, so the browser reads `/api/kenari.models` with the same session that
+ * already authenticates the Remote calls. The browser never parses Kenari's
+ * payloads itself, so the tags here and `kenari_list_models` cannot disagree.
+ *
+ * Entry point: the Models page's 获取可用模型 button, on the Kenari card only.
+ * dsh renders that button itself and offers no slot inside its dialog — adding
+ * fields there would mean editing dsh, which this plugin never does. What a
+ * plugin CAN own is the entry point, so `installFetchTakeover` recognizes that
+ * one button in the card this bundle's slot renders into and opens this
+ * plugin's picker instead. Every branch fails open, so the native flow is
+ * still there wherever the takeover does not apply.
  */
 
 window.__ModuleLoader__.load({
@@ -40,6 +46,7 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
     const React = require('react')
+    const { Modal, Button, Pill, Tag } = require('@deepseek-ai/dsh-client-ui-primitives')
 
     /** Must match the Host-side `KENARI_SETTINGS_NAMESPACE`. */
     const NS = 'kenari'
@@ -56,6 +63,22 @@ window.__ModuleLoader__.load({
      * the first response arrives.
      */
     const CAPABILITY_TAGS = ['image', 'audio', 'video', 'pdf', 'embedding']
+
+    /**
+     * Marks the Kenari card in the DOM. The Models-page component renders it
+     * into the same card element dsh renders that card's editor into, which is
+     * what lets the click takeover tell "the 获取可用模型 button on the Kenari
+     * card" from the identical button every other provider's editor renders.
+     */
+    const MARKER_ATTR = 'data-kenari-model-picker'
+
+    /**
+     * The label dsh's own 获取可用模型 button carries, in the locales this
+     * build ships. Text is the only stable identity that button has: its class
+     * is a CSS-module hash, and its position among its siblings varies with
+     * whether the 重置模型目录 link is rendered beside it.
+     */
+    const FETCH_LABELS = ['获取可用模型', 'Fetch available models']
 
     /** Scalar fields the Host reads live, so an edit applies at the next operation. */
     const LIVE_FIELDS = [
@@ -90,13 +113,6 @@ window.__ModuleLoader__.load({
     ]
 
     /**
-     * One chip frame shared by the selected and unselected states: toggling a
-     * filter fills it in, it never redraws the outline in a different color, so
-     * a row of chips reads as one control strip whatever is active.
-     */
-    const CHIP_BORDER = '1px solid rgba(127,127,127,0.4)'
-
-    /**
      * The selection box every row starts with, in both of its forms: a real
      * checkbox on a row you can add, and the ✓ marker on a row already in the
      * route. A native checkbox carries browser margin and its own intrinsic
@@ -125,24 +141,25 @@ window.__ModuleLoader__.load({
       notice: { margin: 0, opacity: 0.7, fontSize: '12px' },
       error: { margin: 0, color: '#c0392b', fontSize: '12px' },
       toolbar: { display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' },
-      chip: { padding: '2px 9px', borderRadius: '999px', border: CHIP_BORDER, background: 'transparent', color: 'inherit', font: 'inherit', fontSize: '12px', cursor: 'pointer' },
-      chipOn: { padding: '2px 9px', borderRadius: '999px', border: CHIP_BORDER, background: 'rgba(127,127,127,0.28)', color: 'inherit', font: 'inherit', fontSize: '12px', cursor: 'pointer', fontWeight: 600 },
-      search: { flex: '1 1 160px', minWidth: '120px', boxSizing: 'border-box', padding: '3px 8px', border: '1px solid rgba(127,127,127,0.4)', borderRadius: '6px', background: 'transparent', color: 'inherit', font: 'inherit' },
-      // Every tag renders through this one style — capability tags and 套餐内
-      // alike — so a row reads as a set of equal facts rather than one badge
-      // shouting louder than the rest. They never shrink: a squeezed badge is
-      // unreadable, and the row wraps instead, keeping every tag at full width.
-      capTag: { display: 'inline-block', flexShrink: 0, whiteSpace: 'nowrap', padding: '0 6px', borderRadius: '4px', border: '1px solid rgba(127,127,127,0.35)', fontSize: '11px', opacity: 0.85 },
-      list: { maxHeight: '320px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '2px', border: '1px solid rgba(127,127,127,0.18)', borderRadius: '6px', padding: '6px 8px' },
+      filterRow: { display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' },
+      // The search box is the one control dsh's Input atom cannot carry here:
+      // that atom wraps the field in a fixed-height inline-flex box whose width
+      // comes from a class this bundle cannot pass, so the field would size to
+      // its placeholder. Styling the bare input with dsh's own tokens keeps the
+      // look while leaving `flex` — the thing this layout needs — to inline style.
+      search: { flex: '1 1 200px', minWidth: '140px', boxSizing: 'border-box', height: '32px', padding: '0 8px', border: '0.5px solid var(--dsw-alias-border-l4)', borderRadius: '8px', background: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-primary)', font: 'inherit', fontSize: '14px' },
+      // The list scrolls inside the dialog: the picker must never push its own
+      // footer off screen, because that footer is where 添加所选 lives.
+      list: { maxHeight: 'min(52vh, 420px)', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '2px', border: '0.5px solid var(--dsw-alias-border-l4)', borderRadius: '8px', padding: '6px 8px' },
       // The row is one non-wrapping band: checkbox, id, then the tag column.
       // `alignItems: center` therefore centers the id against the tag block,
       // and the tags wrap inside their own column instead of restarting at the
       // row's left edge.
-      item: { display: 'flex', flexWrap: 'nowrap', gap: '8px', alignItems: 'center', padding: '3px 0' },
+      item: { display: 'flex', flexWrap: 'nowrap', gap: '8px', alignItems: 'center', padding: '3px 0', cursor: 'default' },
       itemId: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'nowrap', flexShrink: 0 },
       tagColumn: { display: 'flex', flexWrap: 'wrap', gap: '2px 6px', alignItems: 'center', flex: '1 1 auto', minWidth: 0 },
       dim: { opacity: 0.45, fontSize: '12px', whiteSpace: 'nowrap', flexShrink: 0 },
-      primary: { alignSelf: 'flex-start', padding: '4px 12px', borderRadius: '6px', border: '1px solid rgba(127,127,127,0.5)', background: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer' },
+      footerNote: { marginRight: 'auto', opacity: 0.7, fontSize: '12px' },
     }
 
     /** Subscribe to one settings scope snapshot (stable handles for React). */
@@ -283,15 +300,100 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The optional-models browser: the same catalog the tools see, with the
-     * capability and plan dimensions surfaced as tags and as filters.
-     *
-     * `allowAdd` is what separates the two seats. On the Kenari settings card
-     * the panel is a browser only (the route is edited on the Models page); on
-     * the Models page it can write the selected models into the route's
-     * profile, extending the array instead of replacing it.
+     * One render's worth of derived catalog facts, in one pure function so the
+     * filter/count logic is testable without React (the build gate does that).
+     * `known` is "already in the route's model array", which is what turns a
+     * checkbox into a ✓ and keeps an existing entry out of the write.
      */
-    function CatalogBrowser(props) {
+    function derivePanel(view, routeState, query, flags, picked) {
+      const tags = Array.isArray(view.tags) && view.tags.length > 0 ? view.tags : CAPABILITY_TAGS
+      const models = Array.isArray(view.models) ? view.models : []
+      const known = {}
+      for (const id of (routeState && routeState.modelIds) || []) known[id] = true
+      const visible = models.filter((model) => matchesFilters(model, query.trim(), flags))
+      const visibleIds = visible.map((model) => model.id)
+      const addable = visible.filter((model) => known[model.id] !== true && picked.indexOf(model.id) !== -1)
+      const allVisiblePicked = visibleIds.length > 0 && visibleIds.every((id) => picked.indexOf(id) !== -1)
+      return { tags, models, known, visible, visibleIds, addable, allVisiblePicked }
+    }
+
+    /**
+     * One Kenari route exists at a time, so the takeover and the mounted card
+     * need no wiring: a module-level channel carries the click that opened the
+     * picker (with the native button, for the fail-safe) to the component that
+     * renders it. `mounted` is the takeover's guard — no listener means no
+     * Kenari card on this page, and the native button is left alone.
+     */
+    function createOpenChannel() {
+      const listeners = new Set()
+      return {
+        open(button) {
+          for (const listener of [...listeners]) listener(button)
+        },
+        subscribe(listener) {
+          listeners.add(listener)
+          return () => {
+            listeners.delete(listener)
+          }
+        },
+        get mounted() {
+          return listeners.size > 0
+        },
+      }
+    }
+    const pickerChannel = createOpenChannel()
+
+    /** Set while this plugin re-clicks the native button itself, so that click cannot loop back here. */
+    let takeoverBypassed = false
+
+    /** The nearest ancestor of `start` that contains this card's marker. */
+    function cardWithMarker(start) {
+      let node = start.parentElement
+      while (node !== null && node.ownerDocument !== null && node !== node.ownerDocument.body) {
+        if (typeof node.querySelector === 'function' && node.querySelector(`[${MARKER_ATTR}]`) !== null) return node
+        node = node.parentElement
+      }
+      return null
+    }
+
+    /**
+     * Take over the Kenari card's 获取可用模型 button.
+     *
+     * A capture-phase listener on the document runs before React's
+     * root-container listener, so `stopPropagation` here keeps dsh's own click
+     * handler from ever seeing the event. The match is deliberately narrow: the
+     * label is dsh's own, and the button must sit in a card containing this
+     * bundle's marker. Everything else — another provider's identical button, a
+     * click inside this plugin's own dialog (which is portaled to `body`, so no
+     * marker is above it), a click this plugin originated — propagates
+     * untouched, which is what keeps the native dialog reachable.
+     */
+    function installFetchTakeover() {
+      const onClickCapture = (event) => {
+        if (takeoverBypassed || !pickerChannel.mounted) return
+        const target = event.target
+        if (target === null || target === undefined || typeof target.closest !== 'function') return
+        const button = target.closest('button')
+        if (button === null) return
+        const label = typeof button.textContent === 'string' ? button.textContent.trim() : ''
+        if (FETCH_LABELS.indexOf(label) === -1) return
+        if (cardWithMarker(button) === null) return
+        event.preventDefault()
+        event.stopPropagation()
+        pickerChannel.open(button)
+      }
+      document.addEventListener('click', onClickCapture, true)
+      return () => {
+        document.removeEventListener('click', onClickCapture, true)
+      }
+    }
+
+    /**
+     * Everything the catalog shows and does, in one hook feeding both entry
+     * points (the taken-over native button and the Kenari settings page), so a
+     * filter or a write behaves identically wherever the reader opened it.
+     */
+    function useCatalogPanel(props) {
       const { allowAdd, routeNs, routeProvider, loadPanel, addModels } = props
       const [state, setState] = React.useState({ status: 'loading' })
       const [reloads, setReloads] = React.useState(0)
@@ -322,23 +424,9 @@ window.__ModuleLoader__.load({
         }
       }, [loadPanel, reloads, allowAdd, routeNs, routeProvider])
 
-      if (state.status === 'loading') return React.createElement('p', { style: styles.notice }, '正在读取模型目录…')
-      if (state.status === 'error') {
-        return React.createElement('p', { style: styles.error }, `模型目录读取失败：${state.message}`)
-      }
-
-      const view = state.panel.view
-      const routeState = state.panel.route
-      const tags = Array.isArray(view.tags) && view.tags.length > 0 ? view.tags : CAPABILITY_TAGS
-      const models = view.models || []
-      const known = {}
-      for (const id of (routeState && routeState.modelIds) || []) known[id] = true
-
-      const visible = models.filter((model) => matchesFilters(model, query.trim(), flags))
-      const visibleIds = visible.map((model) => model.id)
-      const selectedVisible = visibleIds.filter((id) => picked.indexOf(id) !== -1)
-      const allVisiblePicked = visibleIds.length > 0 && selectedVisible.length === visibleIds.length
-      const addable = visible.filter((model) => known[model.id] !== true && picked.indexOf(model.id) !== -1)
+      const view = state.status === 'ready' ? state.panel.view : {}
+      const routeState = state.status === 'ready' ? state.panel.route : undefined
+      const derived = derivePanel(view, routeState, query, flags, picked)
 
       const toggleFlag = (tag) => {
         setFlags((current) => {
@@ -354,23 +442,32 @@ window.__ModuleLoader__.load({
           : current.filter((entry) => entry !== id))
       }
       const toggleVisible = () => {
-        setPicked((current) => allVisiblePicked
-          ? current.filter((id) => visibleIds.indexOf(id) === -1)
-          : current.concat(visibleIds.filter((id) => current.indexOf(id) === -1)))
+        setPicked((current) => derived.allVisiblePicked
+          ? current.filter((id) => derived.visibleIds.indexOf(id) === -1)
+          : current.concat(derived.visibleIds.filter((id) => current.indexOf(id) === -1)))
       }
       const clearFilters = () => {
         setQuery('')
         setFlags({})
       }
 
+      /**
+       * Write the picked-and-not-yet-in-route models into the route, then
+       * re-read so the ✓ marks and the count come from the document rather than
+       * from what this function assumed it wrote.
+       */
       const submit = () => {
-        const profiles = addable.map((model) => model.profile)
+        const profiles = derived.addable.map((model) => model.profile)
         if (profiles.length === 0 || routeNs === undefined || routeProvider === undefined) return
         setWrite({ status: 'saving' })
         addModels({ settingsNs: routeNs, provider: routeProvider }, profiles).then(
           (result) => {
             setWrite(result.ok === true
-              ? { status: 'added', message: `已加入 ${profiles.length} 个模型` }
+              ? {
+                status: 'added',
+                message: `已加入 ${String(profiles.length)} 个模型到 kenari 路由（立即生效，不需要再点「保存」）。`
+                  + '卡片里那份模型列表是编辑器的草稿，要收起再展开「编辑」才会刷新。',
+              }
               : { status: 'error', message: result.message })
             if (result.ok === true) {
               setPicked([])
@@ -381,115 +478,261 @@ window.__ModuleLoader__.load({
         )
       }
 
+      return { state, view, routeState, derived, query, setQuery, flags, picked, write, toggleFlag, togglePick, toggleVisible, clearFilters, submit }
+    }
+
+    /** The search box, the filter chips, and the select-all control. */
+    function CatalogToolbar(props) {
+      const { panel } = props
       // Every dimension is one chip of the same kind: plan, free, then the
       // capability tags. No plan NAMES appear anywhere — a reader filtering by
       // subscription wants "covered by a plan", not a pick-one-of-five tier.
-      const filterChips = ['plan', 'free'].concat(tags).map((tag) => React.createElement(
-        'button',
+      const chips = ['plan', 'free'].concat(panel.derived.tags).map((tag) => React.createElement(
+        Pill,
         {
           key: tag,
-          type: 'button',
-          style: flags[tag] === true ? styles.chipOn : styles.chip,
-          'aria-pressed': flags[tag] === true,
-          onClick: () => { toggleFlag(tag) },
+          active: panel.flags[tag] === true,
+          'aria-pressed': panel.flags[tag] === true,
+          onClick: () => {
+            panel.toggleFlag(tag)
+          },
         },
         tag === 'plan' ? '套餐内' : tag === 'free' ? '免费' : tag,
       ))
-
       return React.createElement(
-        React.Fragment,
-        null,
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
         React.createElement(
           'div',
           { style: styles.toolbar },
           React.createElement('input', {
             style: styles.search,
             type: 'search',
-            value: query,
+            value: panel.query,
             placeholder: '搜索 id / 名称 / 厂商',
             'aria-label': '搜索模型',
-            onChange: (event) => { setQuery(event.target.value) },
+            onChange: (event) => {
+              panel.setQuery(event.target.value)
+            },
           }),
-          filterChips,
-          React.createElement('button', { type: 'button', style: styles.chip, onClick: clearFilters }, '清除筛选'),
-        ),
-        React.createElement(
-          'p',
-          { style: styles.notice },
-          `显示 ${visible.length} / ${models.length} 个模型`
-          + (allowAdd ? `，已选 ${addable.length} 个待加入` : '')
-          + `。能力标签按目录事实推导；免费模型看 id 的 \`:free\` 后缀；「套餐内」= 付费模型被某个订阅套餐覆盖（请求从套餐额度扣费），没有这个标签的付费模型只能用余额（PAYG）。`,
-        ),
-        view.plansError !== undefined
-          ? React.createElement('p', { style: styles.error }, `套餐表读取失败，「套餐内」标签与筛选本次不可用：${view.plansError}`)
-          : null,
-        visible.length === 0
-          ? React.createElement('p', { style: styles.notice }, '当前筛选下没有模型。')
-          : React.createElement(
-            'div',
-            { style: styles.list },
-            visible.map((model) => React.createElement(
-              'label',
-              { key: model.id, style: styles.item },
-              allowAdd && known[model.id] !== true
-                ? React.createElement('input', {
-                  type: 'checkbox',
-                  style: styles.pickBox,
-                  checked: picked.indexOf(model.id) !== -1,
-                  onChange: () => { togglePick(model.id) },
-                })
-                : React.createElement('span', { style: styles.pickMark }, known[model.id] === true ? '✓' : ''),
-              // The id alone: it is the exact string a request and the route
-              // entry use, and the vendor's display name beside it only made
-              // every row wider without adding anything a reader acts on. The
-              // name still travels in the payload (search matches it, and it
-              // is what gets written into the route's model entry).
-              React.createElement('code', { style: styles.itemId }, model.id),
-              // The tags are their OWN wrapping column, not siblings of the id
-              // in one wrapping row: as siblings, a wrapped line restarts at the
-              // row's left edge (measured: `pdf` at x=0, under the checkbox),
-              // which reads as a stray line rather than as the row's tags. In a
-              // column they wrap in place, and the id centers against the block.
-              React.createElement(
-                'span',
-                { style: styles.tagColumn },
-                // No 免费 tag: a free model says so in its own id (`...:free`),
-                // so the badge only repeated what the row already showed. The
-                // 免费 FILTER stays, and it still reads the payload's `free`
-                // field rather than the suffix — if Kenari ever marks a model
-                // free without renaming it, filtering keeps working.
-                (model.tags || []).map((tag) => React.createElement('span', { key: tag, style: styles.capTag }, tag)),
-                // One boolean tag, never one badge per plan: the only question a
-                // row answers is "does a subscription cover this PAID model", and
-                // the tier that happens to cover it is not the reader's business.
-                planCovered(model) ? React.createElement('span', { style: styles.capTag }, '套餐内') : null,
-                model.chatCapable === false ? React.createElement('span', { style: styles.dim }, '（非会话模型）') : null,
-                known[model.id] === true ? React.createElement('span', { style: styles.dim }, '已在路由') : null,
-              ),
-            )),
+          React.createElement(
+            Button,
+            { variant: 'ghost', size: 'sm', disabled: panel.derived.visible.length === 0, onClick: panel.toggleVisible },
+            panel.derived.allVisiblePicked ? '取消全选' : '全选可见',
           ),
-        allowAdd
+          React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: panel.clearFilters }, '清除筛选'),
+        ),
+        React.createElement('div', { style: styles.filterRow }, chips),
+      )
+    }
+
+    /** What the current filter is showing, and what the tags mean. */
+    function CatalogSummary(props) {
+      const { derived, allowAdd } = props
+      return React.createElement(
+        'p',
+        { style: styles.notice },
+        `显示 ${String(derived.visible.length)} / ${String(derived.models.length)} 个模型`
+        + (allowAdd ? `，已选 ${String(derived.addable.length)} 个待加入` : '')
+        + '。能力标签按目录事实推导；免费模型看 id 的 `:free` 后缀；「套餐内」= 付费模型被某个订阅套餐覆盖（请求从套餐额度扣费），没有这个标签的付费模型只能用余额（PAYG）。',
+      )
+    }
+
+    /** The model rows: pick box, id, then the tag column. */
+    function CatalogRows(props) {
+      const { derived, allowAdd, picked, togglePick } = props
+      if (derived.visible.length === 0) {
+        return React.createElement('p', { style: styles.notice }, '当前筛选下没有模型。')
+      }
+      return React.createElement(
+        'div',
+        { style: styles.list },
+        derived.visible.map((model) => React.createElement(
+          'label',
+          { key: model.id, style: styles.item },
+          // The pick column exists only where a pick is possible. In the
+          // read-only dialog there is no route to check against, so an empty
+          // box would be a blank column in front of every row.
+          allowAdd
+            ? derived.known[model.id] !== true
+              ? React.createElement('input', {
+                type: 'checkbox',
+                style: styles.pickBox,
+                checked: picked.indexOf(model.id) !== -1,
+                onChange: () => {
+                  togglePick(model.id)
+                },
+              })
+              : React.createElement('span', { style: styles.pickMark }, '✓')
+            : null,
+          // The id alone: it is the exact string a request and the route entry
+          // use, and the vendor's display name beside it only made every row
+          // wider without adding anything a reader acts on. The name still
+          // travels in the payload (search matches it, and it is what gets
+          // written into the route's model entry).
+          React.createElement('code', { style: styles.itemId }, model.id),
+          // The tags are their OWN wrapping column, not siblings of the id in
+          // one wrapping row: as siblings, a wrapped line restarts at the row's
+          // left edge, which reads as a stray line rather than as the row's
+          // tags. In a column they wrap in place, and the id centers against
+          // the block. Every tag uses dsh's one `outline` tone, so the facts
+          // read as a set rather than one badge shouting louder than the rest.
+          React.createElement(
+            'span',
+            { style: styles.tagColumn },
+            // No 免费 tag: a free model says so in its own id (`...:free`), so
+            // the badge only repeated what the row already showed. The 免费
+            // FILTER stays, and it still reads the payload's `free` field
+            // rather than the suffix — if Kenari ever marks a model free
+            // without renaming it, filtering keeps working.
+            (model.tags || []).map((tag) => React.createElement(Tag, { key: tag, tone: 'outline' }, tag)),
+            // One boolean tag, never one badge per plan: the only question a
+            // row answers is "does a subscription cover this PAID model", and
+            // the tier that happens to cover it is not the reader's business.
+            planCovered(model) ? React.createElement(Tag, { tone: 'outline' }, '套餐内') : null,
+            model.chatCapable === false ? React.createElement('span', { style: styles.dim }, '（非会话模型）') : null,
+            derived.known[model.id] === true ? React.createElement('span', { style: styles.dim }, '已在路由') : null,
+          ),
+        )),
+      )
+    }
+
+    /**
+     * The catalog as dsh's own dialog: same Modal chrome, same Button/Pill/Tag
+     * tokens as the 获取可用模型 dialog it stands in for, with the capability
+     * and plan dimensions added into that one surface.
+     *
+     * It is mounted only while open (see the two call sites), so a closed dialog
+     * costs no request and every opening starts from a fresh query and pick set.
+     */
+    function ModelCatalogModal(props) {
+      const { allowAdd, onClose, nativeButton, loadPanel, addModels, routeNs, routeProvider } = props
+      const panel = useCatalogPanel({ allowAdd, routeNs, routeProvider, loadPanel, addModels })
+
+      /**
+       * The way back out: close this dialog, then re-click the button dsh
+       * rendered, with the takeover bypassed for that one click so the native
+       * flow runs. Only offered when this plugin's own view failed to load.
+       */
+      const fallbackToNative = () => {
+        onClose()
+        if (nativeButton !== null && nativeButton !== undefined && typeof nativeButton.click === 'function') {
+          takeoverBypassed = true
+          try {
+            nativeButton.click()
+          } finally {
+            setTimeout(() => {
+              takeoverBypassed = false
+            }, 0)
+          }
+        }
+      }
+
+      const footer = allowAdd
+        ? React.createElement(
+          React.Fragment,
+          null,
+          React.createElement('span', { style: styles.footerNote }, '写入立即生效'),
+          React.createElement(Button, { variant: 'outline', onClick: onClose }, '取消'),
+          React.createElement(
+            Button,
+            {
+              variant: 'primary',
+              disabled: panel.derived.addable.length === 0 || panel.write.status === 'saving',
+              onClick: panel.submit,
+            },
+            panel.write.status === 'saving' ? '正在加入…' : `添加所选（${String(panel.derived.addable.length)}）`,
+          ),
+        )
+        : React.createElement(Button, { variant: 'outline', onClick: onClose }, '关闭')
+
+      const plansError = viewPlansError(panel)
+      const body = panel.state.status === 'loading'
+        ? React.createElement('p', { style: styles.notice }, '正在读取模型目录…')
+        : panel.state.status === 'error'
           ? React.createElement(
-            'div',
-            { style: styles.toolbar },
-            React.createElement('button', { type: 'button', style: styles.chip, onClick: toggleVisible }, allVisiblePicked ? '取消全选' : '全选可见'),
-            React.createElement(
-              'button',
-              {
-                type: 'button',
-                style: styles.primary,
-                disabled: addable.length === 0 || write.status === 'saving',
-                onClick: submit,
-              },
-              write.status === 'saving' ? '正在加入…' : `加入所选到 kenari 路由（${addable.length}）`,
-            ),
-            routeState !== undefined && routeState.writable === false
-              ? React.createElement('span', { style: styles.notice }, '设置文档只读，不能写入。')
+            React.Fragment,
+            null,
+            React.createElement('p', { style: styles.error }, `模型目录读取失败：${panel.state.message}`),
+            allowAdd && nativeButton !== undefined
+              ? React.createElement('p', { style: { margin: 0 } }, React.createElement(
+                Button,
+                { variant: 'outline', size: 'sm', onClick: fallbackToNative },
+                '改用 dsh 自带对话框',
+              ))
               : null,
-            write.status === 'added' ? React.createElement('span', { style: styles.badge }, write.message) : null,
-            write.status === 'error' ? React.createElement('span', { style: styles.error }, write.message) : null,
           )
-          : null,
+          : React.createElement(
+            React.Fragment,
+            null,
+            React.createElement(CatalogToolbar, { panel }),
+            React.createElement(CatalogSummary, { derived: panel.derived, allowAdd }),
+            plansError !== undefined ? React.createElement('p', { style: styles.error }, plansError) : null,
+            React.createElement(CatalogRows, { derived: panel.derived, allowAdd, picked: panel.picked, togglePick: panel.togglePick }),
+            panel.routeState !== undefined && panel.routeState.writable === false
+              ? React.createElement('p', { style: styles.notice }, '设置文档只读，不能写入。')
+              : null,
+            panel.write.status === 'added' ? React.createElement('p', { style: styles.notice }, panel.write.message) : null,
+            panel.write.status === 'error' ? React.createElement('p', { style: styles.error }, panel.write.message) : null,
+          )
+
+      return React.createElement(
+        Modal,
+        {
+          open: true,
+          onClose,
+          title: allowAdd ? '选择要添加的模型' : '可选模型目录',
+          closeLabel: '关闭',
+          description: allowAdd
+            ? 'Kenari 目录的可用模型，按能力与套餐筛选后勾选，点「添加所选」写入 kenari 路由。'
+            : '只读浏览。目录、能力标签与套餐归属都由 Host 侧组装（公开目录 + 套餐表），没配 key 也能看。',
+          footer,
+        },
+        body,
+      )
+    }
+
+    /** The plan-table failure sentence, or `undefined` when the table loaded. */
+    function viewPlansError(panel) {
+      const plansError = panel.view.plansError
+      return plansError === undefined
+        ? undefined
+        : `套餐表读取失败，「套餐内」标签与筛选本次不可用：${String(plansError)}`
+    }
+
+    /**
+     * The Models-page seat. dsh dispatches `settings.models.provider-card` for
+     * every route the pi-ai namespace owns, into that route's own card, so the
+     * hidden marker it renders here is how the takeover recognizes the card —
+     * and the reason another pi-ai route renders nothing at all.
+     */
+    function ModelPickerHost(props) {
+      const [request, setRequest] = React.useState(null)
+      React.useEffect(() => pickerChannel.subscribe((button) => {
+        setRequest({ button })
+      }), [])
+      // The seat dispatches for every route the pi-ai namespace owns; this
+      // picker is about Kenari, so another pi-ai route renders nothing — not
+      // even the marker, which is what keeps the takeover from claiming that
+      // route's otherwise identical button.
+      if (props.provider === undefined || props.provider.provider !== 'kenari') return null
+      return React.createElement(
+        React.Fragment,
+        null,
+        React.createElement('span', { [MARKER_ATTR]: 'kenari', style: { display: 'none' } }),
+        request === null
+          ? null
+          : React.createElement(ModelCatalogModal, {
+            allowAdd: true,
+            nativeButton: request.button,
+            onClose: () => {
+              setRequest(null)
+            },
+            routeNs: PI_AI_NS,
+            routeProvider: props.provider.provider,
+            loadPanel: props.loadPanel,
+            addModels: props.addModels,
+          }),
       )
     }
 
@@ -591,6 +834,7 @@ window.__ModuleLoader__.load({
       // an override equal to the composition default is still an override.
       const user = snapshot.user || {}
       const writable = snapshot.writable === true
+      const [browsing, setBrowsing] = React.useState(false)
 
       const write = (field, next) => scope.set(field, next)
 
@@ -663,7 +907,7 @@ window.__ModuleLoader__.load({
           React.createElement(
             'div',
             { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-            RESTART_FIELDS.map((spec) => React.createElement(RestartField, { key: spec.field, spec, value: value[spec.field] })),
+            RESTART_FIELDS.map((spec) => React.createElement(RestartField, { key: spec.field, spec: spec, value: value[spec.field] })),
           ),
         ),
 
@@ -679,16 +923,29 @@ window.__ModuleLoader__.load({
           ),
         ),
 
+        // The same dialog the Models page opens, minus the write: this page is
+        // for reading the catalog, and the route is edited where dsh edits it.
         React.createElement(
           'div',
           { style: styles.block },
-          React.createElement('h4', { style: styles.blockTitle }, '可选模型（能力 / 套餐筛选）'),
-          React.createElement(CatalogBrowser, { allowAdd: false, loadPanel }),
+          React.createElement('h4', { style: styles.blockTitle }, '可选模型目录'),
           React.createElement(
             'p',
             { style: styles.notice },
-            '目录、能力标签与套餐归属都由 Host 侧组装（公开目录 + 套餐表），所以没配 key 也能看。要在路由里增删模型请去「设置 → 模型 → Kenari → 编辑」。',
+            '与「设置 → 模型 → Kenari → 编辑 → 获取可用模型」打开的是同一个对话框：目录、能力标签与套餐归属都由 Host 侧组装，没配 key 也能看。',
           ),
+          React.createElement(
+            Button,
+            { variant: 'outline', size: 'sm', onClick: () => { setBrowsing(true) } },
+            '浏览可选模型（能力 / 套餐筛选）',
+          ),
+          browsing
+            ? React.createElement(ModelCatalogModal, {
+              allowAdd: false,
+              onClose: () => { setBrowsing(false) },
+              loadPanel,
+            })
+            : null,
         ),
 
         React.createElement(
@@ -722,29 +979,6 @@ window.__ModuleLoader__.load({
 
     /** Services this bundle needs: the slot ledger, the Remotes, and our settings scope. */
     const inject = ['slots', 'remote', 'remote.llm', 'remote.credentials', 'remote.settings', 'settingsScope']
-
-    /** The provider-card extension seat's registrant: our panel, for pi-ai routes only. */
-    function ProviderCardCatalog(props) {
-      // The seat dispatches for every route the pi-ai namespace owns; this
-      // panel is about Kenari, so another pi-ai route renders nothing.
-      if (props.provider === undefined || props.provider.provider !== 'kenari') return null
-      return React.createElement('div', { style: styles.block },
-        React.createElement('h4', { style: styles.blockTitle }, 'Kenari 可选模型（能力 / 套餐筛选）'),
-        React.createElement(CatalogBrowser, {
-          allowAdd: true,
-          routeNs: PI_AI_NS,
-          routeProvider: props.provider.provider,
-          loadPanel: props.loadPanel,
-          addModels: props.addModels,
-        }),
-        React.createElement(
-          'p',
-          { style: styles.notice },
-          '这是 dsh「获取可用模型」的能力/套餐扩展：勾选后写入该路由的模型数组（在现有列表后追加，不覆盖）。'
-          + 'dsh 自带的那个对话框由 dsh 自己渲染，只显示模型 id，插件无法往里加标签或过滤器。',
-        ),
-      )
-    }
 
     /**
      * Register the Kenari settings page once the shell has declared
@@ -868,8 +1102,8 @@ window.__ModuleLoader__.load({
       // The Models-page seat: dsh declares this slot for exactly this purpose
       // ("a plugin distributed outside this repository adds UI to the Models
       // settings section without editing it"), keyed by the owning settings
-      // namespace. Only the pi-ai route needs it, and the component narrows
-      // further to Kenari.
+      // namespace. The component narrows it to the Kenari route and doubles as
+      // the anchor and renderer for the 获取可用模型 takeover below.
       ctx.slots.inject('settings.models.provider-card', () =>
         ctx.slots.register(
           {
@@ -877,14 +1111,34 @@ window.__ModuleLoader__.load({
             key: PI_AI_NS,
             inject: () => ({ loadPanel, addModels }),
           },
-          ProviderCardCatalog,
+          ModelPickerHost,
         ),
       )
+
+      // One document-level listener, torn down with this fiber. It is inert
+      // until the Kenari card mounts, because a click only means anything when
+      // this plugin's dialog can answer it.
+      ctx.effect(() => installFetchTakeover(), 'kenari: 获取可用模型 入口接管')
     }
 
     exports.NS = NS
     exports.inject = inject
     exports.apply = apply
+    // The build gate (scripts/check-client.mjs) drives the pure logic directly:
+    // filters, plan coverage, and the route read/write shapes are where a
+    // regression is silent in the browser.
+    exports.__internals = {
+      CAPABILITY_TAGS,
+      FETCH_LABELS,
+      MARKER_ATTR,
+      pathGet,
+      routeModelsOf,
+      planCovered,
+      matchesFilters,
+      derivePanel,
+      cardWithMarker,
+      ModelCatalogModal,
+    }
     return module.exports
   },
 })

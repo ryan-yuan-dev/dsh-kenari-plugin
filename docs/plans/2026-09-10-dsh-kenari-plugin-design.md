@@ -542,6 +542,58 @@ computed style 只有 1 种；`套餐内` 原来的蓝色胶囊样式删除）�
 （14×14、`margin: 0`、`boxSizing: border-box`、`flexShrink: 0`），勾选框直接用，`✓` 再加
 flex 居中；实测同一面板里两种形式的 x / 宽 / 高 / 垂直中心偏移完全一致（x=0、14×14、offset 0）。
 
+### ✅ 合并「获取可用模型」入口（2026-09-11）
+
+第六轮反馈：那块并列的「Kenari 可选模型（能力 / 套餐筛选）」面板**不该单独列出**，
+要和 dsh 的「获取可用模型」**融合成一个入口**。
+
+对话框内部加不了东西（红线，见上），但**入口可以接管**：`settings.models.provider-card` 的
+挂载点与 `renderProviderEditor(...)` 是**同一个 `<li>` 卡片内的兄弟节点**（`ModelsSection` 实测），
+所以那个按钮就在插件标记所在的卡片里。做法：
+
+- slot 只渲染一个隐藏标记 `data-kenari-model-picker`（以及被点开后的对话框），不再渲染任何列表；
+- `apply` 里注册一个 **document 捕获阶段** click 监听：`target.closest('button')` 的文本命中
+  dsh 自己的标签（`获取可用模型` / `Fetch available models`）**且**该按钮往上第一个含标记的祖先存在时，
+  `preventDefault + stopPropagation`（捕获阶段早于 React 挂载在根容器上的监听，所以 dsh 的处理函数
+  收不到这次点击）并打开插件的对话框；
+- **其余一律放行**：别的 provider 的同名按钮（其卡片没有标记）、插件自己对话框里的点击
+  （Modal 是 portal 到 `body` 的，上方没有标记）、以及插件自己重放的那一次点击（`takeoverBypassed`）。
+
+**顺带实测出的基线事实**：`PLATFORM_MODULES` 里有 `react-dom` / `react-dom/client` /
+`@deepseek-ai/dsh-client-ui-primitives`。在安装版 0.1.5-rc.1 的 shell bundle 里逐字核对过这张表，
+且该模块的导出面确实带 `Modal` / `Button` / `Pill` / `Tag`（dsh 自己的 `ui-settings-models` 也从这里取
+`Modal`、`Button`）。**基线模块是隐式 external，不需要 `dsh.client.external` 声明** —— 于是合并后的对话框
+用的是 dsh 自己的 Modal / Button / Pill / Tag：同一套 chrome、同一套 `--dsw-*` token，是那个对话框本身，
+而不是一个长得像的仿制品。行内标签也换成了 dsh 的 `Tag`（`tone: outline`，只留一个 tone，
+"所有标签统一样式"的口径不变）。
+
+**语义差异（必须知道）**：dsh 原对话框把勾选加进**编辑器草稿**，之后还要点「保存」；插件够不到那份草稿，
+所以写入是**即时**的（走 `settings.mutate`，与「加入所选」同一条路）。由此：
+
+- 对话框脚注与成功提示都写明"写入立即生效，不需要再点保存"；
+- 同一卡片里编辑器的模型列表在**重新展开「编辑」之前是旧的**（实测：编辑器开着时写入，
+  编辑器仍显示 18 行；收起再展开 → 19 行）。成功提示把这句也写出来。dsh 自己的「重置模型目录」
+  在编辑器开着时同样是这个行为，不是本插件引入的异常。
+
+**失效回退**：目录视图读取失败时，对话框给出「改用 dsh 自带对话框」——关掉本对话框，置
+`takeoverBypassed` 后重放刚才那一次点击，原生流程照旧。
+
+**验证**（2026-09-11）：
+
+- `scripts/check-client.mjs` 27 条断言全过。本轮新增：纯函数层（`套餐内`/`免费`/能力 AND/搜索/已在路由
+  不重复加入/全选态/用户层覆盖 base 层/`pathGet` 不造默认值）、`cardWithMarker`
+  的"只认带标记的卡片"（另一张卡片必须返回 null，否则会抢走它唯一的模型选择器）、
+  以及对话框 chrome / body / footer 的真实渲染
+- 浏览器实测（3099，不影响 3080）：模型页 Kenari 行**只剩** `Edit` / `Restore defaults` /
+  `Fetch available models`，并列面板已消失；点 dsh 的按钮弹出本插件对话框（标题「选择要添加的模型」、
+  7 个过滤片、`显示 80 / 80`、17 行「已在路由」、30 行「套餐内」、63 个勾选框）；
+  `image` 过滤 → 46/80 且**每行都带 image 标签**、`aria-pressed=true`；
+  标签不挤压（`scrollWidth == clientWidth`，实测宽 49/46/46/35/50）、行 `nowrap` 而标签列 `wrap`、
+  id 与行中线偏移 < 1px；
+  写入实测 17 → 18 → 19 条并**按备份逐字节还原**（sha256 一致，见下）；
+  设置 → Kenari 页的「可选模型目录」按钮打开同一个对话框，只读（0 个勾选框、无「添加所选」、脚注只有「关闭」）；
+  「取消」只关本对话框，设置对话框保持打开
+
 ### ✅ 默认路由按套餐决定（2026-09-11）
 
 用户要求：默认**不要**放 `:free` 模型；插件能查到当前 key 的套餐与该套餐的 `free_cache_models`，
