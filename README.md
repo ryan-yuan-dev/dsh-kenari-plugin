@@ -56,12 +56,13 @@ KENARI_API_KEY=kn-...
 「Kenari 可选模型（能力 / 套餐筛选）」（Kenari 设置分区里也有同样的面板）：
 
 - 每个模型名后跟着**能力标签**（`image` / `audio` / `video` / `pdf` / `embedding`）、`免费`，
-  以及覆盖它的**套餐名**（Indie / Kreator / Studio / Agensi / Enterprise）
-- 过滤：搜索框、套餐下拉，以及 `免费` `image` `audio` `video` `pdf` `embedding` 过滤片
+  以及一个 `套餐内` 标签——表示这个模型在订阅套餐的覆盖范围内。
+  **不显示套餐档位名**：这里只回答"订阅能不能用"，具体覆盖列表由 Kenari 侧维护
+- 过滤：搜索框，以及 `套餐内` `免费` `image` `audio` `video` `pdf` `embedding` 过滤片
   （多个过滤片是**同时满足**）
 - 勾选后可「加入所选到 kenari 路由」：**追加**到该路由现有模型之后，不会覆盖已有条目
 
-标签的口径：套餐标签 = 请求会从该套餐额度扣费（没有套餐标签 = 只能用预付余额 PAYG）；
+标签的口径：`套餐内` = 请求会从某个订阅套餐的额度扣费（没有这个标签 = 只能用预付余额 PAYG）；
 能力标签按目录事实推导——`image/audio/video/pdf` 看 `modalities.input` 与 `endpoints`，
 `embedding` 来自 `?modality=embedding` 目录。目录与套餐表都读**公开端点**，所以还没有 key 时也能看。
 

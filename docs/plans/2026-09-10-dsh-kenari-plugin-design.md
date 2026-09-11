@@ -474,8 +474,10 @@ README 内容：安装、key 获取、三协议选择与 base URL 区别、fallb
 
 - **浏览器侧**：注册 slot `settings.models.provider-card`（key = `llm-pi-ai`，dsh 声明这个槽位就是
   "给仓库外插件往模型设置页加 UI，而不必改这一页"），只对 `kenari` 路由渲染。面板给出
-  1) 模型名后的能力标签（image / audio / video / pdf / embedding）、`免费` 标签与套餐名标签；
-  2) 搜索 + `plan`（套餐下拉）+ `free`/`image`/`audio`/`video`/`pdf`/`embedding` 过滤片（多选为 AND）；
+  1) 模型名后的能力标签（image / audio / video / pdf / embedding）、`免费` 与 `套餐内`
+  （= 该模型在订阅套餐的覆盖范围内；**不显示套餐档位名**，档位只是"覆盖与否"的来源）；
+  2) 搜索 + `套餐内` / `免费` / `image` / `audio` / `video` / `pdf` / `embedding` 过滤片（多选为 AND，
+  `套餐内` 是布尔维度而非选档）；
   3) 「加入所选到 kenari 路由」——按 pi-ai 语义**追加**到现有数组（用户层有数组就用它，否则用 patch 的预设），
   不整体替换。
 - **Host 侧数据**：新增 `src/plans.ts`（`GET /api/plans` + TTL 缓存 + 模型→套餐归属索引）、
@@ -500,12 +502,20 @@ README 内容：安装、key 获取、三协议选择与 base URL 区别、fallb
   **全部 80 个 profile 一次性通过真实的 `llm-pi-ai` Config（schemastery）校验**——这正是设置写入的那道关
 - `scripts/check-client.mjs`：两个 slot 注册都真实渲染一次（Kenari 行出面板、其它 pi-ai 路由返回 null）
 - 浏览器实测（`dsh --profile web --port 3099 --no-open`，不影响 3080 上用户实例）：
-  设置 → 模型 → Kenari 行出现面板，标签正确（`gemini-2-5-flash` → image+audio+video+pdf+五个套餐标签，
+  设置 → 模型 → Kenari 行出现面板，过滤片为 `套餐内` `免费` `image` `audio` `video` `pdf` `embedding`
+  （无套餐下拉，行内只显示一个 `套餐内` 标签，不显示档位名，也没有 hover 明细）；
+  取值可复算：套餐内 35/80、再叠免费 5/80、再叠 video 3/80、清除回 80/80；
+  能力标签正确（`gemini-2-5-flash` → image+audio+video+pdf+套餐内，
   `gemini-3-1-flash-tts` → audio + 非会话模型，`deepseek-v4-flash` → 已在路由）；
-  筛选取值可复算：免费 13/80、再叠 image 5/80（AND）、清除回 80/80、套餐 Agensi 34/80；
   Kenari 设置卡内同名面板同样渲染；两处都无 `data-slot-error`。
-  「加入所选」实测把 `deepseek-v4-pro` 写进 `~/.dsh/settings.yaml` 的 `llm-pi-ai.providers.kenari.models`
+  「加入所选」实测把模型写进 `~/.dsh/settings.yaml` 的 `llm-pi-ai.providers.kenari.models`
   （17 → 18 条，写入通过 schema 校验），随后按备份逐字节还原（sha256 一致）
+- 面板的数据请求稳定为每次挂载 1 次（修掉了 effect 依赖新建对象导致的重复取数）
+
+**口径调整（2026-09-11，用户反馈后）**：初版把每个覆盖套餐的名字逐个当标签打出来，并把 `plan`
+做成套餐下拉。用户指出 plan 标签的含义是"该模型在订阅覆盖范围内"，且不要显示档位名，
+故改为：行内单个 `套餐内` 标签 + `套餐内` 布尔过滤片，档位名不再出现在任何界面上
+（`/api/kenari.models` 仍返回套餐清单，那是数据来源与诊断用，不是展示）。
 
 ## 5. 实施前需确认的未知项
 

@@ -109,7 +109,6 @@ window.__ModuleLoader__.load({
       toolbar: { display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' },
       chip: { padding: '2px 9px', borderRadius: '999px', border: '1px solid rgba(127,127,127,0.4)', background: 'transparent', color: 'inherit', font: 'inherit', fontSize: '12px', cursor: 'pointer' },
       chipOn: { padding: '2px 9px', borderRadius: '999px', border: '1px solid currentColor', background: 'rgba(127,127,127,0.18)', color: 'inherit', font: 'inherit', fontSize: '12px', cursor: 'pointer', fontWeight: 600 },
-      select: { padding: '2px 6px', border: '1px solid rgba(127,127,127,0.4)', borderRadius: '6px', background: 'transparent', color: 'inherit', font: 'inherit', fontSize: '12px' },
       search: { flex: '1 1 160px', minWidth: '120px', boxSizing: 'border-box', padding: '3px 8px', border: '1px solid rgba(127,127,127,0.4)', borderRadius: '6px', background: 'transparent', color: 'inherit', font: 'inherit' },
       capTag: { display: 'inline-block', marginLeft: '5px', padding: '0 6px', borderRadius: '4px', border: '1px solid rgba(127,127,127,0.35)', fontSize: '11px', opacity: 0.85 },
       planTag: { display: 'inline-block', marginLeft: '5px', padding: '0 6px', borderRadius: '999px', background: 'rgba(46,134,222,0.16)', border: '1px solid rgba(46,134,222,0.45)', fontSize: '11px' },
@@ -227,9 +226,13 @@ window.__ModuleLoader__.load({
       return Array.isArray(inherited) ? inherited : []
     }
 
-    /** One model row's filter decision: every active dimension must match (capabilities are ANDed too). */
-    function matchesFilters(model, query, plan, flags) {
-      if (plan !== '' && (model.plans || []).indexOf(plan) === -1) return false
+    /**
+     * One model row's filter decision: every active dimension must match
+     * (capabilities are ANDed too). `plan` is a yes/no dimension — "is a
+     * subscription covering this model" — not a pick-one-of-N tier selector.
+     */
+    function matchesFilters(model, query, flags) {
+      if (flags.plan === true && (model.plans || []).length === 0) return false
       if (flags.free === true && model.free !== true) return false
       for (const tag of CAPABILITY_TAGS) {
         if (flags[tag] === true && (model.tags || []).indexOf(tag) === -1) return false
@@ -256,7 +259,6 @@ window.__ModuleLoader__.load({
       const [state, setState] = React.useState({ status: 'loading' })
       const [reloads, setReloads] = React.useState(0)
       const [query, setQuery] = React.useState('')
-      const [plan, setPlan] = React.useState('')
       const [flags, setFlags] = React.useState({})
       const [picked, setPicked] = React.useState([])
       const [write, setWrite] = React.useState({ status: 'idle' })
@@ -292,11 +294,10 @@ window.__ModuleLoader__.load({
       const routeState = state.panel.route
       const tags = Array.isArray(view.tags) && view.tags.length > 0 ? view.tags : CAPABILITY_TAGS
       const models = view.models || []
-      const planNames = (view.plans || []).map((entry) => entry.name)
       const known = {}
       for (const id of (routeState && routeState.modelIds) || []) known[id] = true
 
-      const visible = models.filter((model) => matchesFilters(model, query.trim(), plan, flags))
+      const visible = models.filter((model) => matchesFilters(model, query.trim(), flags))
       const visibleIds = visible.map((model) => model.id)
       const selectedVisible = visibleIds.filter((id) => picked.indexOf(id) !== -1)
       const allVisiblePicked = visibleIds.length > 0 && selectedVisible.length === visibleIds.length
@@ -322,7 +323,6 @@ window.__ModuleLoader__.load({
       }
       const clearFilters = () => {
         setQuery('')
-        setPlan('')
         setFlags({})
       }
 
@@ -344,7 +344,10 @@ window.__ModuleLoader__.load({
         )
       }
 
-      const filterChips = ['free'].concat(tags).map((tag) => React.createElement(
+      // Every dimension is one chip of the same kind: plan, free, then the
+      // capability tags. No plan NAMES appear anywhere — a reader filtering by
+      // subscription wants "covered by a plan", not a pick-one-of-five tier.
+      const filterChips = ['plan', 'free'].concat(tags).map((tag) => React.createElement(
         'button',
         {
           key: tag,
@@ -353,7 +356,7 @@ window.__ModuleLoader__.load({
           'aria-pressed': flags[tag] === true,
           onClick: () => { toggleFlag(tag) },
         },
-        tag === 'free' ? '免费' : tag,
+        tag === 'plan' ? '套餐内' : tag === 'free' ? '免费' : tag,
       ))
 
       return React.createElement(
@@ -370,17 +373,6 @@ window.__ModuleLoader__.load({
             'aria-label': '搜索模型',
             onChange: (event) => { setQuery(event.target.value) },
           }),
-          React.createElement(
-            'select',
-            {
-              style: styles.select,
-              value: plan,
-              'aria-label': '按套餐筛选',
-              onChange: (event) => { setPlan(event.target.value) },
-            },
-            React.createElement('option', { value: '' }, '全部套餐'),
-            planNames.map((name) => React.createElement('option', { key: name, value: name }, `${name} 可用`)),
-          ),
           filterChips,
           React.createElement('button', { type: 'button', style: styles.chip, onClick: clearFilters }, '清除筛选'),
         ),
@@ -389,10 +381,10 @@ window.__ModuleLoader__.load({
           { style: styles.notice },
           `显示 ${visible.length} / ${models.length} 个模型`
           + (allowAdd ? `，已选 ${addable.length} 个待加入` : '')
-          + `。标签按目录事实推导；套餐标签 = 请求从该套餐额度扣费，无标签即只能用余额（PAYG）。`,
+          + `。能力标签按目录事实推导；「套餐内」= 该模型被某个订阅套餐覆盖（请求从套餐额度扣费），没有这个标签就只能用余额（PAYG）。`,
         ),
-        Array.isArray(view.plans) && view.plans.length === 0 && view.plansError !== undefined
-          ? React.createElement('p', { style: styles.error }, `套餐表读取失败，本次只按能力筛选：${view.plansError}`)
+        view.plansError !== undefined
+          ? React.createElement('p', { style: styles.error }, `套餐表读取失败，「套餐内」标签与筛选本次不可用：${view.plansError}`)
           : null,
         visible.length === 0
           ? React.createElement('p', { style: styles.notice }, '当前筛选下没有模型。')
@@ -413,7 +405,12 @@ window.__ModuleLoader__.load({
               React.createElement('span', { style: styles.itemMeta }, model.name && model.name !== model.id ? model.name : ''),
               model.free === true ? React.createElement('span', { style: styles.capTag }, '免费') : null,
               (model.tags || []).map((tag) => React.createElement('span', { key: tag, style: styles.capTag }, tag)),
-              (model.plans || []).map((name) => React.createElement('span', { key: `plan-${name}`, style: styles.planTag }, name)),
+              // One boolean tag, never one badge per plan: the only question a
+              // row answers is "does a subscription cover this model", and the
+              // tier that happens to cover it is not the reader's business here.
+              (model.plans || []).length > 0
+                ? React.createElement('span', { style: styles.planTag }, '套餐内')
+                : null,
               model.chatCapable === false ? React.createElement('span', { style: styles.dim }, '（非会话模型）') : null,
               known[model.id] === true ? React.createElement('span', { style: styles.dim }, '已在路由') : null,
             )),
