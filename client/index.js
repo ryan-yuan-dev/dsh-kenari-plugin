@@ -96,6 +96,15 @@ window.__ModuleLoader__.load({
      */
     const CHIP_BORDER = '1px solid rgba(127,127,127,0.4)'
 
+    /**
+     * The selection box every row starts with, in both of its forms: a real
+     * checkbox on a row you can add, and the ✓ marker on a row already in the
+     * route. A native checkbox carries browser margin and its own intrinsic
+     * size, so a plain span around the ✓ lined up with nothing — both forms get
+     * this exact box, which is what keeps the ✓ and the checkboxes in one column.
+     */
+    const PICK_BOX = { width: '14px', height: '14px', flexShrink: 0, margin: 0, boxSizing: 'border-box' }
+
     const styles = {
       root: { display: 'flex', flexDirection: 'column', gap: '18px', fontSize: '13px', lineHeight: 1.6 },
       title: { margin: 0, fontSize: '15px', fontWeight: 600 },
@@ -107,6 +116,8 @@ window.__ModuleLoader__.load({
       hint: { gridColumn: '2 / 3', opacity: 0.6, fontSize: '12px', marginTop: '-4px' },
       input: { width: '100%', boxSizing: 'border-box', padding: '4px 8px', border: '1px solid rgba(127,127,127,0.4)', borderRadius: '6px', background: 'transparent', color: 'inherit', font: 'inherit' },
       checkboxRow: { display: 'flex', alignItems: 'center', gap: '8px' },
+      pickBox: PICK_BOX,
+      pickMark: { ...PICK_BOX, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', lineHeight: 1, opacity: 0.75 },
       mono: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
       badge: { display: 'inline-block', padding: '1px 7px', borderRadius: '999px', border: '1px solid rgba(127,127,127,0.4)', fontSize: '11px', opacity: 0.85 },
       table: { width: '100%', borderCollapse: 'collapse' },
@@ -423,10 +434,11 @@ window.__ModuleLoader__.load({
               allowAdd && known[model.id] !== true
                 ? React.createElement('input', {
                   type: 'checkbox',
+                  style: styles.pickBox,
                   checked: picked.indexOf(model.id) !== -1,
                   onChange: () => { togglePick(model.id) },
                 })
-                : React.createElement('span', { style: { width: '13px' } }, known[model.id] === true ? '✓' : ''),
+                : React.createElement('span', { style: styles.pickMark }, known[model.id] === true ? '✓' : ''),
               // The id alone: it is the exact string a request and the route
               // entry use, and the vendor's display name beside it only made
               // every row wider without adding anything a reader acts on. The
