@@ -155,17 +155,116 @@ export function reasoningEffortsOf(model: KenariModel): Record<string, string> |
 }
 
 /**
+ * slug 片段 → 展示名里的写法。查表优先，其次识别版本号与参数量后缀，最后首字母大写。
+ * 表里只放**会读错**的词：缩写（`gpt`/`glm`/`tts`）与品牌大小写（`deepseek`/`mimo`/`minimax`）。
+ */
+const NAME_TOKENS: Record<string, string> = {
+  gpt: 'GPT', glm: 'GLM', ai: 'AI', tts: 'TTS', asr: 'ASR', stt: 'STT', ocr: 'OCR', pdf: 'PDF',
+  hd: 'HD', xs: 'XS', xl: 'XL', oss: 'OSS', api: 'API', llm: 'LLM', mcp: 'MCP', vlm: 'VLM', it: 'IT',
+  deepseek: 'DeepSeek', mimo: 'MiMo', minimax: 'MiniMax', openai: 'OpenAI', kimi: 'Kimi', qwen: 'Qwen',
+}
+
+/** 一个 slug 片段的写法。 */
+function spellNameToken(token: string): string {
+  const known = NAME_TOKENS[token]
+  if (known !== undefined) return known
+  if (/^\d+(\.\d+)*$/.test(token)) return token
+  if (/^v\d+(\.\d+)*$/.test(token)) return token
+  if (/^[a-z]\d+[a-z]{0,3}$/.test(token)) return token.toUpperCase()
+  if (/^\d+[a-z]{1,3}$/.test(token)) return token.toUpperCase()
+  return token[0]!.toUpperCase() + token.slice(1)
+}
+
+/** `glm-5-3-flash` → `GLM 5.3 Flash`；版本号还原成点分，参数量后缀转大写。 */
+function slugToDisplayName(id: string): string {
+  const colon = id.indexOf(':')
+  const base = colon === -1 ? id : id.slice(0, colon)
+  const tokens = base.split(/[-_]/).filter((token) => token.length > 0)
+  const merged: string[] = []
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]!
+    if (/^\d+$/.test(token)) {
+      const run = [token]
+      while (index + 1 < tokens.length && /^\d+$/.test(tokens[index + 1]!)) {
+        index += 1
+        run.push(tokens[index]!)
+      }
+      merged.push(run.join('.'))
+      continue
+    }
+    // 版本前缀：单个字母 + 数字（`v2`、`m2`）把紧跟的数字并进同一个版本号（`v2-5` → `v2.5`）。
+    const versioned = /^(v|[a-z])\d+$/.exec(token)
+    if (versioned !== null) {
+      const run = [token.slice(versioned[1]!.length)]
+      while (index + 1 < tokens.length && /^\d+$/.test(tokens[index + 1]!)) {
+        index += 1
+        run.push(tokens[index]!)
+      }
+      merged.push(versioned[1]! + run.join('.'))
+      continue
+    }
+    merged.push(token)
+  }
+  return merged.map(spellNameToken).join(' ')
+}
+
+/**
+ * 一个模型的展示名。
+ *
+ * 目录里只有 8 个模型自带 `name`，而且**都不是会话模型**（语音、图像、视频那几个），
+ * 所以会话模型的展示名必须能从 id 还原。这里的推导不是猜：Kenari 给出 `name` 的那 8 个
+ * 模型与本函数的输出**逐字一致**（Veo 3.1 Lite、MiniMax Speech 2.8 Turbo、
+ * Nano Banana Pro…），`test/catalog-view.mjs` 用它们反测。
+ *
+ * dsh 的「显示名称」是纯展示字段（不参与请求），所以还原值即使不完美也只是可改的默认值。
+ */
+export function displayNameOf(model: KenariModel): string {
+  const named = typeof model.name === 'string' ? model.name.trim() : ''
+  return named.length > 0 ? named : slugToDisplayName(model.id)
+}
+
+/**
+ * 每请求最大输出 token 的推荐值。
+ *
+ * 目录里**没有**这个字段：对全部 76 行实测过，只有 `context_length`，没有
+ * `max_output_tokens` / `max_completion_tokens` / `top_provider`。所以它是推出来的：
+ *
+ * - **窗口的 1/4**：一次回答最多占多少窗口的常见取法，给提示词留 3/4，请求才不会被
+ *   自己的上限顶出窗口。厂商公开的比例落在 6%（Gemini 2.5 的 65k / 1M）到
+ *   32%（Claude 的 64k / 200k）之间，取 1/4 偏宽——写代码时"被截断"比"留得多"更常见。
+ * - **不设下限**：下限看着无害，其实会算错小窗口的模型。目录里 `bge-m3` 的窗口只有 8192，
+ *   若按 8192 兜底就等于把整个窗口都推荐成输出。（全部会话模型的窗口都 ≥128K，所以
+ *   真正的会话模型从来用不到下限。）
+ * - **向下取整到 1K**：窗口不都是 2 的幂（有 128000、255976 这种），直接算会得到
+ *   32000 / 63994 这类数字。向下取整同时保证推荐值不超过窗口的 1/4。
+ * - **上限 65536**：主流厂商公开的单次输出上限最大就在这一档，再大不代表任何真实能力。
+ *   实测网关自己不做这个校验（`max_tokens` 给到 262144 仍返回 200），dsh 也不会把它从
+ *   输入预算里扣掉，所以这个上限是"别写没有意义的数"，不是"写了会出错"。
+ *
+ * 目录不公布窗口的模型（18 个，其中只有 `qwen3-8-max` 是会话模型）不写这个字段：
+ * 没有窗口可依据时，任何数值都是编的，不如沿用 pi-ai 自己的默认值。
+ */
+export function recommendedMaxTokens(contextWindow: number | undefined): number | undefined {
+  if (typeof contextWindow !== 'number' || !Number.isFinite(contextWindow) || contextWindow <= 0) return undefined
+  const share = Math.floor(contextWindow / 4 / 1024) * 1024
+  return Math.min(65536, Math.max(1024, share))
+}
+
+/**
  * 目录行 → pi-ai provider profile 的 model 条目。
  *
  * 这是「把目录里的模型加进 `llm-pi-ai` 路由」时写进用户设置的形状，
  * 字段必须逐个来自目录：pi-ai 的 schema 会拒绝多余或拼错的键。
- * `maxTokens` 故意不写：它同时会成为每请求默认输出上限，
- * 网关的真实上限不确定时写它会让长回答被静默截断。
+ *
+ * `name` 与 `maxTokens` 都写：前者是 dsh 模型目录里那个「显示名称」框（不写就空着），
+ * 后者是每请求输出上限（不写则整条路由共用 pi-ai 的 `defaultMaxTokens` 32768，
+ * 于是每个模型看到的都是同一个数）。两者的推导见上面两个函数。
  */
 export function toModelProfile(model: KenariModel): {
   id: string
-  name?: string
+  name: string
   contextWindow?: number
+  maxTokens?: number
   input?: ('text' | 'image')[]
   reasoningEfforts?: Record<string, string>
 } {
@@ -173,10 +272,12 @@ export function toModelProfile(model: KenariModel): {
   const contextWindow = typeof model.context_length === 'number' && model.context_length > 0
     ? model.context_length
     : undefined
+  const maxTokens = recommendedMaxTokens(contextWindow)
   return {
     id: model.id,
-    ...(model.name === undefined ? {} : { name: model.name }),
+    name: displayNameOf(model),
     ...(contextWindow === undefined ? {} : { contextWindow }),
+    ...(maxTokens === undefined ? {} : { maxTokens }),
     input: inputModalitiesOf(model),
     ...(efforts === undefined ? {} : { reasoningEfforts: efforts }),
   }

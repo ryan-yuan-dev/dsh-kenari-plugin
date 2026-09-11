@@ -347,13 +347,27 @@ window.__ModuleLoader__.load({
      */
     const EXCLUSIVE_FILTERS = { plan: 'free', free: 'plan' }
 
-    /** Toggle one filter dimension, enforcing the exclusive pair above. */
+    /**
+     * `embedding` stands alone.
+     *
+     * It does not describe a capability of a chat model — it is the marker of a
+     * different population (the `?modality=embedding` catalog: embedding models,
+     * which have no chat endpoint). Every other dimension describes chat models,
+     * so ANDing this one with any of them can only ever match nothing, exactly
+     * like the exclusive pair above. Picking it clears everything; picking
+     * anything else clears it.
+     */
+    const SOLO_FILTERS = ['embedding']
+
+    /** Toggle one filter dimension, enforcing the exclusive and solo rules above. */
     function toggleFilter(flags, tag) {
       const next = { ...flags }
       if (next[tag] === true) {
         delete next[tag]
         return next
       }
+      if (SOLO_FILTERS.indexOf(tag) !== -1) return { [tag]: true }
+      for (const solo of SOLO_FILTERS) delete next[solo]
       next[tag] = true
       const released = EXCLUSIVE_FILTERS[tag]
       if (released !== undefined) delete next[released]

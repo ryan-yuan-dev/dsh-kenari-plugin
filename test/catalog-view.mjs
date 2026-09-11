@@ -10,7 +10,7 @@
  *
  * 运行：node test/catalog-view.mjs
  */
-import { KenariCatalog } from '../lib/catalog.js'
+import { KenariCatalog, displayNameOf } from '../lib/catalog.js'
 import { KenariPlans, coverageOf } from '../lib/plans.js'
 import { buildCatalogView } from '../lib/catalog-view.js'
 
@@ -58,8 +58,36 @@ check('profile 的 input 非空且只含 text/image',
 check('profile 的 reasoningEfforts 键都是 dsh 档位',
   view.models.every((m) => m.profile.reasoningEfforts === undefined
     || Object.keys(m.profile.reasoningEfforts).every((k) => LEVELS.has(k))))
-check('profile 不含 maxTokens（避免变成每请求默认上限）',
-  view.models.every((m) => m.profile.maxTokens === undefined))
+// 展示名与输出上限：目录里没有任何会话模型的 `name`（只有 8 个专用模型有），也没有
+// 输出上限字段，所以两者都由插件推出来。正确性用目录自己的事实反测。
+check('每个 profile 都带非空展示名',
+  view.models.every((m) => typeof m.profile.name === 'string' && m.profile.name.trim().length > 0))
+// 断言的是**性质**而不是把公式抄一遍：不超过窗口的 1/4、是 1K 的整数倍、在界内。
+// 「不超过 1/4」这条曾经真的抓到 bug：早期版本有 8192 下限，于是窗口只有 8192 的
+// `bge-m3` 被推荐了 8192 —— 等于把整个窗口都算成输出。
+check('maxTokens 不超过窗口的 1/4，且是 1K 的整数倍',
+  view.models.every((m) => {
+    const contextWindow = m.profile.contextWindow
+    const maxTokens = m.profile.maxTokens
+    if (contextWindow === undefined) return maxTokens === undefined
+    return typeof maxTokens === 'number'
+      && maxTokens >= 1024 && maxTokens <= 65536
+      && maxTokens % 1024 === 0
+      && maxTokens <= Math.max(1024, Math.floor(contextWindow / 4))
+  }),
+  `${view.models.filter((m) => m.profile.maxTokens !== undefined).length} 个带 maxTokens`)
+// 上限是推出来的，不是常数：目录里既有 128K 窗口也有 1M 窗口，取值应当跟着分档。
+const maxTokenValues = [...new Set(view.models.map((m) => m.profile.maxTokens).filter((v) => v !== undefined))].sort((a, b) => a - b)
+check('maxTokens 不是单一常数（随窗口分档）', maxTokenValues.length > 1, `取值：${maxTokenValues.join(' / ')}`)
+
+// 目录自带 `name` 的那几个模型（Veo 3.1 Lite、MiniMax Speech 2.8 Turbo、Nano Banana Pro…）
+// 是 slug→展示名 规则的**标准答案**：把 name 抹掉再推一遍，必须与厂商写法逐字一致。
+// 这条比断言某个具体模型强：它验证的是规则本身，且目录换了模型也照样成立。
+const vendorNamed = view.models.filter((m) => m.name !== m.id)
+const derivedMatches = vendorNamed.filter((m) => displayNameOf({ id: m.id }) === m.name)
+check('slug→展示名 与目录自己的写法逐字一致',
+  vendorNamed.length > 0 && derivedMatches.length === vendorNamed.length,
+  `${derivedMatches.length}/${vendorNamed.length} 个：${vendorNamed.map((m) => `${m.id}→${m.name}`).join('、') || '目录里没有带 name 的模型'}`)
 check('没有重复模型 id', new Set(view.models.map((m) => m.id)).size === view.models.length)
 
 // 最后一道关：把**全部** profile 一次性交给真实的 llm-pi-ai Config schema 校验。

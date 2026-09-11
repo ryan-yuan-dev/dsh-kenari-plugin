@@ -628,3 +628,49 @@ Content-Type: application/json
 `glm-5-3` 在 Agensi/Enterprise 的清单里，但公开目录当前没有这个 id（`glm-5-3-flash` 有），
 所以按清单生成模型列表时必须过一遍目录，查不到的丢掉——本插件就是这么做的
 （`src/default-route.ts`）。
+
+## 目录里**没有**最大输出 token 字段，`name` 也只有 8 个（2026-09-11 实测）
+
+对 `GET /v1/models` 的全部 76 行逐个核对过键集合：
+
+```
+context_length(61) endpoints(76) id(76) modalities(76) object(76) owned_by(76) pricing(76)
+reasoning_toggle(76) sunset_at(76) pricing_lines(63) reasoning(60) reasoning_options(39)
+tool_call(60) formats(2) name(8) voices(1) video_durations(2) video_resolutions(2)
+```
+
+两条结论：
+
+1. **没有任何"单次输出上限"字段**——`max_output_tokens` / `max_completion_tokens` /
+   `top_provider` 都不存在。所以 dsh 的「最大输出 token 数」只能**推**：本插件取
+   **窗口的 1/4**，向下取整到 1K，上限 65536（`catalog.ts` 的 `recommendedMaxTokens`）。
+   不推的后果是整条路由共用 pi-ai 的 `defaultMaxTokens`（**32768**），每个模型看到的都是同一个数。
+2. **`name` 只有 8 个，而且都不是会话模型**：`gemini-3-1-flash-tts`、`gemini-omni-flash`、
+   `mimo-v2-5-tts`、`minimax-speech-2-8-hd`、`minimax-speech-2-8-turbo`、`nano-banana-2-lite`、
+   `nano-banana-pro`、`veo-3.1-lite`。**61 个会话模型一个都没有 `name`**，所以 dsh 模型目录里的
+   「显示名称」要么留空、要么由 id 还原（`catalog.ts` 的 `displayNameOf`）。
+   那 8 个正好是还原规则的**标准答案**：把 `name` 抹掉再推一遍，8/8 与厂商写法逐字一致
+   （`test/catalog-view.mjs` 就在断言这件事，目录换了模型也照样成立）。
+   还原规则：`-` 分片 → 连续数字或 `v2`/`m2` 这类版本前缀合并成点分（`5-3` → `5.3`、`v2-5` → `v2.5`）
+   → 缩写与品牌查表（`gpt`→`GPT`、`glm`→`GLM`、`deepseek`→`DeepSeek`、`mimo`→`MiMo`）
+   → 参数量后缀转大写（`120b`→`120B`、`a55b`→`A55B`）。
+
+**窗口的分布**（61 行有 `context_length`）：min 128000，p25 262144，中位 1000000，max 1310720。
+只有一个例外：`bge-m3` 的窗口是 **8192**（embedding 模型），所以推荐值不能设"下限"——
+早期版本用 8192 兜底，等于把这个模型的整个窗口都推荐成输出。
+
+## `max_tokens` 给多大都不会被网关拒（2026-09-11 实测）
+
+同一句话（"say ok"）在 `step-3-7-flash:free` 上换三种上限，全部 HTTP 200：
+
+| `max_tokens` | 结果 |
+| --- | --- |
+| 4096 | 200，`finish_reason: stop`，completion_tokens 98 |
+| 65536 | 200，`finish_reason: stop`，completion_tokens 184 |
+| 262144 | 200，`finish_reason: stop`，completion_tokens 71 |
+
+即网关**不校验** `max_tokens` 是否超过模型真实输出上限（也不报 prompt+max 超窗），
+所以推荐值的上限是"别写没有意义的数"，不是"写大了会出错"。
+另外核对过 dsh 侧：`maxTokens` 只当每请求输出上限用（`dsh-llm-pi-ai` 的
+`entry.maxTokens ?? base?.maxTokens ?? request.defaultMaxTokens`），**不会**从
+`contextWindow` 里扣掉，所以调大它不会挤压输入预算。

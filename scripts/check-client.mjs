@@ -254,6 +254,23 @@ check(
   JSON.stringify(internals.toggleFilter({ plan: true }, 'image')) === '{"plan":true,"image":true}',
   JSON.stringify(internals.toggleFilter({ plan: true }, 'image')),
 )
+// `embedding` marks a different population (embedding models have no chat
+// endpoint), so like plan/free it cannot be ANDed with anything — verified here
+// as the structural reason, not just as the toggle's behavior.
+check(
+  'embedding stands alone in both directions',
+  JSON.stringify(internals.toggleFilter({ plan: true, image: true }, 'embedding')) === '{"embedding":true}'
+  && JSON.stringify(internals.toggleFilter({ embedding: true }, 'pdf')) === '{"pdf":true}'
+  && JSON.stringify(internals.toggleFilter({ embedding: true }, 'embedding')) === '{}',
+  JSON.stringify(internals.toggleFilter({ plan: true, image: true }, 'embedding')),
+)
+check(
+  'an embedding model carries no chat-model capability, so ANDing finds nothing',
+  internals.derivePanel(
+    { tags: ['image', 'embedding'], models: [{ id: 'embed-only', tags: ['embedding'], chatCapable: false, profile: { id: 'embed-only' } }] },
+    undefined, '', { embedding: true, image: true }, [],
+  ).visible.length === 0,
+)
 check(
   'search is case-insensitive over id and name',
   ids(internals.derivePanel(VIEW, ROUTE, 'BET', {}, []).visible) === 'beta',
