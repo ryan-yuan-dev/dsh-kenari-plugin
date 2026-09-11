@@ -338,8 +338,6 @@ If you want a similar setup, these are the two I actually use:
 - **[Kenari](https://kenari.id/code/KNR-KKRNAJ)**. One key reaches models from several vendors. The catalog lists 80, from DeepSeek, GLM and GPT through speech, image, video, OCR, embeddings and rerank. It speaks OpenAI-compatible, Anthropic-compatible and Responses, so an existing client needs only a new base URL. Billing is per use in Rupiah with a low top-up minimum (QRIS from Rp 1,000). The catalog and docs endpoints are public, so you can see what you get before paying.
 - **[opencode Go](https://opencode.ai/go?ref=343F5JW4RA)**. $10 a month with quota per 5 hour window instead of per-token billing, and you can top up credit when the quota runs short. It works with any agent, which is why it runs the dsh session model here. Coding sessions make many small requests, so a flat monthly price is easier to predict.
 
-Both are referral links. Signing up through them earns me a small referral reward.
-
 ## License
 
 MIT. See [LICENSE](LICENSE).

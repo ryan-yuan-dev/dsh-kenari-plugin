@@ -338,7 +338,7 @@ KENARI_ALLOW_VIDEO=1 node test/billed-video.mjs   # 会真花钱：生成并下�
 - **[Kenari](https://kenari.id/code/KNR-KKRNAJ)**。一个 key 打通多个厂商的模型，目录里有 80 个，从 DeepSeek、GLM、GPT 到语音、图像、视频、OCR、嵌入和重排。同时给 OpenAI 兼容、Anthropic 兼容和 Responses 三条协议线，现成的客户端改个 base URL 就能接。按量计费，账单直接是印尼盾，充值门槛低（QRIS 最低 Rp 1.000）。目录和文档都是公开端点，没有 key 也能先看清楚有什么再决定。
 - **[opencode Go](https://opencode.ai/go?ref=343F5JW4RA)**。$10 一个月包月，按 5 小时窗口给额度，不用逐 token 算钱，额度不够还能单独充值。它能配任何 agent，所以我拿它跑 dsh 的会话模型。选它是因为写代码时的请求又多又碎，包月比按量计费好预测。
 
-这两个都是推荐链接，通过它们注册我会拿到一点推荐奖励。
+两个都支持支付宝扫码支付。
 
 ## License
 
