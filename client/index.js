@@ -171,14 +171,21 @@ window.__ModuleLoader__.load({
       search: { flex: '1 1 200px', minWidth: '140px', boxSizing: 'border-box', height: '32px', padding: '0 8px', border: '0.5px solid var(--dsw-alias-border-l4)', borderRadius: '8px', background: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-primary)', font: 'inherit', fontSize: '14px' },
       // The list scrolls inside the dialog: the picker must never push its own
       // footer off screen, because that footer is where 添加所选 lives.
-      list: { maxHeight: 'min(52vh, 420px)', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '2px', border: '0.5px solid var(--dsw-alias-border-l4)', borderRadius: '8px', padding: '6px 8px' },
+      // Rows breathe: a row is a hit target and a fact set at once, and at the
+      // density of a pure data grid the tags above and below each other read as
+      // one block. The inner gap separates wrapped tag lines specifically.
+      list: { maxHeight: 'min(52vh, 420px)', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px', border: '0.5px solid var(--dsw-alias-border-l4)', borderRadius: '8px', padding: '8px' },
       // The row is one non-wrapping band: checkbox, id, then the tag column.
       // `alignItems: center` therefore centers the id against the tag block,
       // and the tags wrap inside their own column instead of restarting at the
       // row's left edge.
-      item: { display: 'flex', flexWrap: 'nowrap', gap: '8px', alignItems: 'center', padding: '3px 0', cursor: 'default' },
+      item: { display: 'flex', flexWrap: 'nowrap', gap: '10px', alignItems: 'center', padding: '7px 8px', cursor: 'default' },
       itemId: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'nowrap', flexShrink: 0 },
-      tagColumn: { display: 'flex', flexWrap: 'wrap', gap: '2px 6px', alignItems: 'center', flex: '1 1 auto', minWidth: 0 },
+      tagColumn: { display: 'flex', flexWrap: 'wrap', gap: '4px 8px', alignItems: 'center', flex: '1 1 auto', minWidth: 0 },
+      // The body stacks four things that answer different questions (what can I
+      // filter, how many are showing, the rows, what just happened); a gap keeps
+      // them from reading as one paragraph of controls.
+      body: { display: 'flex', flexDirection: 'column', gap: '14px' },
       dim: { opacity: 0.45, fontSize: '12px', whiteSpace: 'nowrap', flexShrink: 0 },
       footerNote: { marginRight: 'auto', opacity: 0.7, fontSize: '12px' },
     }
@@ -605,11 +612,11 @@ window.__ModuleLoader__.load({
             // FILTER stays, and it still reads the payload's `free` field
             // rather than the suffix — if Kenari ever marks a model free
             // without renaming it, filtering keeps working.
-            (model.tags || []).map((tag) => React.createElement(Tag, { key: tag, tone: 'outline' }, tag)),
+            (model.tags || []).map((tag) => React.createElement(Tag, { key: tag, tone: 'neutral' }, tag)),
             // One boolean tag, never one badge per plan: the only question a
             // row answers is "does a subscription cover this PAID model", and
             // the tier that happens to cover it is not the reader's business.
-            planCovered(model) ? React.createElement(Tag, { tone: 'outline' }, '套餐内') : null,
+            planCovered(model) ? React.createElement(Tag, { tone: 'neutral' }, '套餐内') : null,
             model.chatCapable === false ? React.createElement('span', { style: styles.dim }, '（非会话模型）') : null,
             derived.known[model.id] === true ? React.createElement('span', { style: styles.dim }, '已在路由') : null,
           ),
@@ -683,8 +690,8 @@ window.__ModuleLoader__.load({
               : null,
           )
           : React.createElement(
-            React.Fragment,
-            null,
+            'div',
+            { style: styles.body },
             React.createElement(CatalogToolbar, { panel }),
             React.createElement(CatalogSummary, { derived: panel.derived, allowAdd }),
             plansError !== undefined ? React.createElement('p', { style: styles.error }, plansError) : null,
