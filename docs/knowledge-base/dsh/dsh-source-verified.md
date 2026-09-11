@@ -510,8 +510,16 @@ slot 的 `SlotErrorBoundary` 捕获异常后渲染 `<div data-slot-error="<slotK
 - **捕获阶段能抢在 React 前面**：React 18 把监听挂在根容器上，`document` 上的**捕获**监听先跑，
   `stopPropagation()` 之后根容器收不到，dsh 自己的 onClick 不会执行
 - **按钮的身份只有文本可用**：class 是 CSS module 哈希，兄弟位置随"重置模型目录"链接是否渲染而变；
-  所以按 dsh 自己的标签匹配（`获取可用模型` / `Fetch available models`，双语都写上）
-- **必须 fail-open**：`preventDefault` 之前排除四种情况——没有监听者（本卡未挂载）、按钮不在带标记的
+  所以按 dsh 自己的标签匹配，双语都写上。`模型目录`（`ModelListEditor`）里是**两颗**按钮：
+  `addModel: '添加模型'` / `'Add model'`（原生插一行空白条目）与
+  `fetchModels: '获取可用模型'` / `'Fetch available models'`（原生问提供方要目录）
+- **卡片范围要从标记那一侧问**：`provider-card` 的卡片元素是 `<li>`，而每张 `<li>` 之上有共同的
+  `<ul class="rows">`（`ModelsSection` 实测）。所以"从按钮往上走，第一个含标记的祖先"是**错的** ——
+  从兄弟卡片的按钮往上走，第一个含标记的祖先就是那个 `<ul>`，别的 provider 的同名按钮会被一并接管
+  （症状：原生该插一行空白条目，结果弹出了插件的对话框，还不报错）。
+  正确写法是取标记自己的卡片（`marker.closest('li')`，退路为它的父元素）再 `card.contains(button)`：
+  范围由标记定义，才精确；行卡片不是 `li` 时 `closest` 落空、`contains` 为假，接管自动退回原生
+- **必须 fail-open**：`preventDefault` 之前排除四种情况——没有监听者（本卡未挂载）、按钮不在标记自己的
   卡片内（别的 provider 的同名按钮）、点击来自插件自己的弹窗（portal 到 `body`，往上找不到标记）、
   插件自己重放的那次点击（一个 bypass 标志）
 - 需要"退回原生"时：置 bypass → 对原按钮调 `.click()` → 下一个 tick 复位。注意 disabled 的按钮

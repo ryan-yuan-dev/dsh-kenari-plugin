@@ -10,7 +10,7 @@
  *
  * It also drives the logic that would otherwise only be exercised by hand in a
  * browser: the filter/plan join behind the picker, and the DOM guard behind the
- * 获取可用模型 takeover. Both are silent when wrong — a filter that drops the
+ * 模型目录 takeover. Both are silent when wrong — a filter that drops the
  * wrong row still renders, and a takeover that matches the wrong button still
  * looks like it worked.
  *
@@ -295,31 +295,92 @@ check(
   internals.pathGet({ a: { b: 1 } }, ['a', 'b']) === 1 && internals.pathGet({}, ['a', 'b']) === undefined,
 )
 check(
-  'the takeover matches the Kenari card and only the Kenari card',
+  'the takeover matches both 模型目录 buttons on the Kenari card and only those',
   'data-kenari-model-picker' === internals.MARKER_ATTR
-  && internals.FETCH_LABELS.includes('获取可用模型')
-  && internals.FETCH_LABELS.includes('Fetch available models'),
+  && ['添加模型', 'Add model', '获取可用模型', 'Fetch available models']
+    .every((label) => internals.TAKEOVER_LABELS.includes(label))
+  && internals.TAKEOVER_LABELS.length === 4,
+)
+// The exact-match half: a prefix rule would also swallow the Models page's own
+// 添加提供方, which has nothing to do with this card's model list.
+check(
+  'the label match is exact, not a prefix',
+  internals.isTakeoverLabel('添加模型') === true
+  && internals.isTakeoverLabel('获取可用模型') === true
+  && internals.isTakeoverLabel('Add model') === true
+  && internals.isTakeoverLabel('添加提供方') === false
+  && internals.isTakeoverLabel('添加模型 ') === false
+  && internals.isTakeoverLabel('') === false,
 )
 
 // cardWithMarker walks from a button up to the first ancestor holding the
 // marker. The negative case is the one that matters: another provider's card
-// must not be claimed, because the native dialog is that card's only picker.
+// must not be claimed, because the native editor is that card's only writer.
+//
+// The tree mirrors the measured DOM: one <ul> holds one <li> per provider, the
+// marker sits in the Kenari card's <li> behind a slot wrapper, and a sibling
+// <li> renders buttons whose text is identical. The sibling case is the one
+// that caught a real bug — the shared <ul> contains the marker too, so "walk up
+// until an ancestor holds the marker" claimed the other provider's button.
 {
-  const body = { querySelector: () => null, parentElement: null, ownerDocument: null }
-  const doc = { body }
-  const kenariCard = {
-    querySelector: (selector) => (selector === `[${internals.MARKER_ATTR}]` ? {} : null),
-    parentElement: body,
-    ownerDocument: doc,
+  const make = (tagName, parentElement) => {
+    const node = {
+      tagName,
+      parentElement,
+      ownerDocument: { body: null },
+      closest(wanted) {
+        const target = String(wanted).toLowerCase()
+        let at = node
+        while (at !== null) {
+          if (String(at.tagName).toLowerCase() === target) return at
+          at = at.parentElement
+        }
+        return null
+      },
+      contains(other) {
+        let at = other
+        while (at !== null) {
+          if (at === node) return true
+          at = at.parentElement
+        }
+        return false
+      },
+      querySelector(selector) {
+        return selector === `[${internals.MARKER_ATTR}]` && node.contains(marker) ? marker : null
+      },
+    }
+    return node
   }
-  const kenariEditor = { querySelector: () => null, parentElement: kenariCard, ownerDocument: doc }
-  const kenariButton = { parentElement: kenariEditor, ownerDocument: doc }
-  const otherEditor = { querySelector: () => null, parentElement: body, ownerDocument: doc }
-  const otherButton = { parentElement: otherEditor, ownerDocument: doc }
-  check(
-    'the takeover claims a button inside the marked card only',
-    internals.cardWithMarker(kenariButton) === kenariCard && internals.cardWithMarker(otherButton) === null,
-  )
+  const body = { tagName: 'BODY', parentElement: null, ownerDocument: null }
+  const rows = make('UL', body)
+  const kenariCard = make('LI', rows)
+  const marker = make('SPAN', make('DIV', kenariCard))
+  // Both buttons sit at the same depth in that card: dsh renders the add button
+  // after the row list and the fetch link in the header above it.
+  const kenariEditor = make('DIV', kenariCard)
+  const kenariButtons = [
+    { label: '添加模型', node: make('BUTTON', kenariEditor) },
+    { label: '获取可用模型', node: make('BUTTON', kenariEditor) },
+  ]
+  const otherButton = make('BUTTON', make('DIV', make('LI', rows)))
+
+  const originalQuery = sandbox.document.querySelector
+  sandbox.document.querySelector = (selector) =>
+    (selector === `[${internals.MARKER_ATTR}]` ? marker : originalQuery(selector))
+  try {
+    check(
+      'the marker anchors the card at its own list item, not the list above it',
+      internals.markedCard() === kenariCard && internals.markedCard() !== rows,
+    )
+    check(
+      'the takeover claims a button inside the marked card only',
+      kenariButtons.every((button) =>
+        internals.isTakeoverLabel(button.label) && internals.cardWithMarker(button.node) === kenariCard)
+      && internals.cardWithMarker(otherButton) === null,
+    )
+  } finally {
+    sandbox.document.querySelector = originalQuery
+  }
 }
 
 // ---------------------------------------------------------------------------

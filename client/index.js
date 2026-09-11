@@ -29,13 +29,16 @@
  * already authenticates the Remote calls. The browser never parses Kenari's
  * payloads itself, so the tags here and `kenari_list_models` cannot disagree.
  *
- * Entry point: the Models page's 获取可用模型 button, on the Kenari card only.
- * dsh renders that button itself and offers no slot inside its dialog — adding
- * fields there would mean editing dsh, which this plugin never does. What a
- * plugin CAN own is the entry point, so `installFetchTakeover` recognizes that
- * one button in the card this bundle's slot renders into and opens this
- * plugin's picker instead. Every branch fails open, so the native flow is
- * still there wherever the takeover does not apply.
+ * Entry points: the Kenari card's 模型目录 section renders two buttons that both
+ * mean "put a model in this route" — 添加模型 (native: append a blank row to type
+ * into) and 获取可用模型 (native: ask the provider what it has). For Kenari the
+ * catalog IS the source of truth, so both open this plugin's picker instead of
+ * two divergent native paths. dsh renders those buttons itself and offers no
+ * slot inside its dialog — adding fields there would mean editing dsh, which
+ * this plugin never does. What a plugin CAN own is the entry point, so
+ * `installEntryTakeover` recognizes those two labels in the card this bundle's
+ * slot renders into. Every branch fails open, so the native flow is still there
+ * wherever the takeover does not apply.
  */
 
 window.__ModuleLoader__.load({
@@ -67,18 +70,29 @@ window.__ModuleLoader__.load({
     /**
      * Marks the Kenari card in the DOM. The Models-page component renders it
      * into the same card element dsh renders that card's editor into, which is
-     * what lets the click takeover tell "the 获取可用模型 button on the Kenari
-     * card" from the identical button every other provider's editor renders.
+     * what lets the click takeover tell "the 模型目录 buttons on the Kenari
+     * card" from the identical buttons every other provider's editor renders.
      */
     const MARKER_ATTR = 'data-kenari-model-picker'
 
     /**
-     * The label dsh's own 获取可用模型 button carries, in the locales this
-     * build ships. Text is the only stable identity that button has: its class
-     * is a CSS-module hash, and its position among its siblings varies with
-     * whether the 重置模型目录 link is rendered beside it.
+     * The labels of the two buttons in that card's 模型目录 section, in the
+     * locales this build ships. Text is the only stable identity those buttons
+     * have: their class is a CSS-module hash, and their position among their
+     * siblings varies with whether the 重置模型目录 link is rendered beside
+     * them. 添加模型 appends a blank row natively and 获取可用模型 fetches;
+     * both are taken over because for Kenari the catalog decides what exists.
      */
-    const FETCH_LABELS = ['获取可用模型', 'Fetch available models']
+    const TAKEOVER_LABELS = ['添加模型', 'Add model', '获取可用模型', 'Fetch available models']
+
+    /**
+     * Whether a button's label (already trimmed) belongs to this takeover. An
+     * exact match, never a prefix: the Models page carries other 添加… buttons
+     * whose native meaning has nothing to do with this card's model list.
+     */
+    function isTakeoverLabel(label) {
+      return TAKEOVER_LABELS.indexOf(label) !== -1
+    }
 
     /**
      * The picker's own width.
@@ -421,29 +435,51 @@ window.__ModuleLoader__.load({
     /** Set while this plugin re-clicks the native button itself, so that click cannot loop back here. */
     let takeoverBypassed = false
 
-    /** The nearest ancestor of `start` that contains this card's marker. */
-    function cardWithMarker(start) {
-      let node = start.parentElement
-      while (node !== null && node.ownerDocument !== null && node !== node.ownerDocument.body) {
-        if (typeof node.querySelector === 'function' && node.querySelector(`[${MARKER_ATTR}]`) !== null) return node
-        node = node.parentElement
-      }
-      return null
+    /**
+     * The provider card this bundle's marker identifies: the marker's nearest
+     * list item, which is the element dsh renders one provider's card as.
+     */
+    function markedCard() {
+      const marker = document.querySelector(`[${MARKER_ATTR}]`)
+      if (marker === null || marker === undefined) return null
+      const card = typeof marker.closest === 'function' ? marker.closest('li') : null
+      return card === null ? marker.parentElement : card
     }
 
     /**
-     * Take over the Kenari card's 获取可用模型 button.
+     * The card containing `start`, when that card is this bundle's; else null.
+     *
+     * The test is "does the marked card contain the button", not "is any
+     * ancestor of the button marked": the `<ul>` that holds every provider card
+     * also contains the marker, so walking up from the button until the marker
+     * is found claims a sibling provider's identically labelled button. The
+     * failure that guards against is silent — the wrong card's 添加模型 would
+     * open this picker instead of adding its own row — so the scope is asked
+     * from the marker's side, where it is exact.
+     */
+    function cardWithMarker(start) {
+      const card = markedCard()
+      if (card === null || typeof card.contains !== 'function') return null
+      return card.contains(start) ? card : null
+    }
+
+    /**
+     * Take over the Kenari card's 模型目录 buttons.
      *
      * A capture-phase listener on the document runs before React's
      * root-container listener, so `stopPropagation` here keeps dsh's own click
      * handler from ever seeing the event. The match is deliberately narrow: the
-     * label is dsh's own, and the button must sit in a card containing this
-     * bundle's marker. Everything else — another provider's identical button, a
-     * click inside this plugin's own dialog (which is portaled to `body`, so no
-     * marker is above it), a click this plugin originated — propagates
-     * untouched, which is what keeps the native dialog reachable.
+     * label is one of dsh's own, and the button must sit in a card containing
+     * this bundle's marker. Everything else — another provider's identical
+     * button, a click inside this plugin's own dialog (which is portaled to
+     * `body`, so no marker is above it), a click this plugin originated —
+     * propagates untouched, which is what keeps the native dialog reachable.
+     *
+     * A `disabled` button never dispatches a click at all, so the native
+     * gates (adding while the editor is busy, fetching without a base URL) hold
+     * here too without this function re-reading any of them.
      */
-    function installFetchTakeover() {
+    function installEntryTakeover() {
       const onClickCapture = (event) => {
         if (takeoverBypassed || !pickerChannel.mounted) return
         const target = event.target
@@ -451,7 +487,7 @@ window.__ModuleLoader__.load({
         const button = target.closest('button')
         if (button === null) return
         const label = typeof button.textContent === 'string' ? button.textContent.trim() : ''
-        if (FETCH_LABELS.indexOf(label) === -1) return
+        if (!isTakeoverLabel(label)) return
         if (cardWithMarker(button) === null) return
         event.preventDefault()
         event.stopPropagation()
@@ -464,9 +500,9 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Everything the catalog shows and does, in one hook feeding both entry
-     * points (the taken-over native button and the Kenari settings page), so a
-     * filter or a write behaves identically wherever the reader opened it.
+     * Everything the catalog shows and does, in one hook feeding every entry
+     * point (the card's two taken-over buttons and the Kenari settings page),
+     * so a filter or a write behaves identically wherever the reader opened it.
      */
     function useCatalogPanel(props) {
       const { allowAdd, routeNs, routeProvider, loadPanel, addModels } = props
@@ -670,7 +706,7 @@ window.__ModuleLoader__.load({
 
     /**
      * The catalog as dsh's own dialog: same Modal chrome, same Button/Pill/Tag
-     * tokens as the 获取可用模型 dialog it stands in for, with the capability
+     * tokens as the dialog dsh's own 获取可用模型 opens, with the capability
      * and plan dimensions added into that one surface.
      *
      * It is mounted only while open (see the two call sites), so a closed dialog
@@ -1004,7 +1040,7 @@ window.__ModuleLoader__.load({
           React.createElement(
             'p',
             { style: styles.notice },
-            '与模型页的「获取可用模型」是同一个对话框；数据由 Host 侧组装，没配 key 也能看。',
+            '与模型页 Kenari 卡片「模型目录」下的「添加模型」「获取可用模型」是同一个对话框；数据由 Host 侧组装，没配 key 也能看。',
           ),
           React.createElement(
             Button,
@@ -1175,7 +1211,7 @@ window.__ModuleLoader__.load({
       // ("a plugin distributed outside this repository adds UI to the Models
       // settings section without editing it"), keyed by the owning settings
       // namespace. The component narrows it to the Kenari route and doubles as
-      // the anchor and renderer for the 获取可用模型 takeover below.
+      // the anchor and renderer for the 模型目录 takeover below.
       ctx.slots.inject('settings.models.provider-card', () =>
         ctx.slots.register(
           {
@@ -1190,7 +1226,7 @@ window.__ModuleLoader__.load({
       // One document-level listener, torn down with this fiber. It is inert
       // until the Kenari card mounts, because a click only means anything when
       // this plugin's dialog can answer it.
-      ctx.effect(() => installFetchTakeover(), 'kenari: 获取可用模型 入口接管')
+      ctx.effect(() => installEntryTakeover(), 'kenari: 模型目录入口接管')
       ensureDialogWidth()
     }
 
@@ -1202,7 +1238,8 @@ window.__ModuleLoader__.load({
     // regression is silent in the browser.
     exports.__internals = {
       CAPABILITY_TAGS,
-      FETCH_LABELS,
+      TAKEOVER_LABELS,
+      isTakeoverLabel,
       MARKER_ATTR,
       pathGet,
       routeModelsOf,
@@ -1210,6 +1247,7 @@ window.__ModuleLoader__.load({
       matchesFilters,
       toggleFilter,
       derivePanel,
+      markedCard,
       cardWithMarker,
       ModelCatalogModal,
     }
