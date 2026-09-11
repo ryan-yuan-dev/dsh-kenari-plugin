@@ -26,6 +26,16 @@
 - id: tool-web
   disabled: false
 
+# Session-title byte budget: the plugin writes a `yyyyMMddHHmmss-` prefix (15
+# bytes) into every new session title, while dsh-base caps any accepted title at
+# 80. Bump the cap to 96 so a prefixed title stays within policy. This number
+# MUST stay in sync with the plugin's `sessionTitleMaxBytes` setting.
+- id: session-title
+  config:
+    fallbackMaxWords: 5
+    fallbackMaxBytes: 40
+    maxTitleBytes: 96
+
 # ---------------------------------------------------------------------------
 # Kenari as a session model — zero-code preset on the dormant `llm-pi-ai` row.
 #

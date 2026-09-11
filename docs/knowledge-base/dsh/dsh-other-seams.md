@@ -213,3 +213,22 @@ stdio 桥接会**刻意移除**名字像凭据的环境变量与所有 `DSH_*` �
 ## 客户端半边（设置卡片）
 
 见 `dsh-plugin-model.md`（同目录）的"客户端模块"一节。要点：一个包两个半边，Host 在 `src/`、浏览器在 `src/client/`，导出 `./client`，package.json 声明 `dsh.client`。
+
+## ctx.sessionTitle（会话标题）实测要点
+
+来源：`packages/session/session-title`、`session-title-llm`、`session-title-first-prompt-llm` 实读，加上对 `packages/core/session`、`packages/core/scope` 的实现核对。
+
+**挂载现状**：web profile 已挂 `session-title`（服务）+ `session-title-llm` 行 = `dsh-session-title-first-prompt-llm`（用会话当前模型，从第一条人类消息生成标题）。两者都由 `packages/bundle/base/cordis.patch.yml:48` 提供；base 里 `maxTitleBytes` 是 80。
+
+**存储形状与显示**：标题是 log-only 的 `session/title` 事件，数据固定为
+`{ title, messageSeqs, source }` —— **没有独立的前缀字段**。客户端会话列表读服务端 `title` 投影（`displayTitle = title ?? cwd 基名 ?? id`，`api/session-controller/src/client/sessions/service.ts:146`），即把该字符串原样渲染。因此「存着前缀但显示时隐藏」在插件边界内做不到：`ui-workspace` 的会话行标题没有槽位（`sidebar.workspaces` 的子槽只有 `sidebar.workspaces.directoryFlow`），TUI 更无触点。
+
+**单 provider 槽位**：`ctx.sessionTitle.register()` 第二次注册抛错，所以插件若要自己产出标题，必须在 patch 里 `disabled: true` 掉 `session-title-llm` 行（`sdk-app`/`acp-app` 有先例）。只加前缀则不需要接管 provider。
+
+**事件监听（加前缀的合法缝）**：`ctx.on('session/event'|'session/created'|'session/disposed')`。未打 scope 标签的插件 ctx 能收到所有会话事件 —— `core/scope` 的 `scopeTarget()` 过滤器对 `scopeOf(ctx) === undefined` 的监听器一律放行（`packages/core/scope/src/index.ts:176`）。
+
+**append 重入**：`session/event` 在 append 的发布窗口内**同步**派发（`core/session/src/index.ts:745`），此时 `entry.appending === true`，回调里再 `session.append` 会抛 `session append cannot reenter while another append is being published`（同文件 `:723`）。改写标题必须 `queueMicrotask` defer，并在执行时重读最新 folded title，否则会覆盖更新的标题。
+
+**fork 的坑**：浏览器 fork 之后会显式调 host 的 `rename`，写入 `increasedForkTitle(父标题)`（`api/session-controller/src/client/sessions/service.ts:437`、`:156`），这次 rename 在 host 上 `source.kind === 'user'`。所以按 source 区分「用户改名不加前缀」会在 fork 上漏改前缀；统一按「剥旧前缀 + 按本会话 `createdAt` 重加」处理才对。fork 子会话继承的父标题事件**不会**触发 `session/event`（seed 由构造器写入），只能靠 `session/created` 补一次改写；普通 resume 要跳过，否则等于回溯已有会话。
+
+**时间与长度**：`session.header.createdAt`（epoch 毫秒）是会话创建时间，fork 子会话拿到的是自己的创建时间；`maxTitleBytes` 只约束 dsh 自己的写入路径，插件直接 append 的事件要自己截断 —— 两处上限需人工同步。

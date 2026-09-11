@@ -16,6 +16,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-settings'
 import type z from '@deepseek-ai/schemastery'
 import type { Config } from './index.js'
+import { validateSessionTitlePrefix } from './session-title.js'
 
 /** 设置命名空间：必须匹配 `/^[a-z][a-z0-9-]*$/`。 */
 export const KENARI_SETTINGS_NAMESPACE = 'kenari'
@@ -54,6 +55,12 @@ export function validateKenariConfig(value: Config): void {
   if ((value.modelRetryableCodes ?? []).length === 0) {
     throw new Error('modelRetryableCodes 不能为空：空列表会让重试策略无效')
   }
+  // 前缀模板与字节预算：开关开启时模板必须渲染出非空前缀，且预算容得下前缀加正文
+  validateSessionTitlePrefix({
+    enabled: value.sessionTitlePrefixEnabled ?? true,
+    template: value.sessionTitlePrefix ?? 'yyyyMMddHHmmss-',
+    maxBytes: value.sessionTitleMaxBytes ?? 96,
+  })
 }
 
 /**

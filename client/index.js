@@ -49,7 +49,7 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
     const React = require('react')
-    const { Modal, Button, Tag } = require('@deepseek-ai/dsh-client-ui-primitives')
+    const { Modal, Button, Tag, Switch } = require('@deepseek-ai/dsh-client-ui-primitives')
 
     /** Must match the Host-side `KENARI_SETTINGS_NAMESPACE`. */
     const NS = 'kenari'
@@ -66,6 +66,277 @@ window.__ModuleLoader__.load({
      * the first response arrives.
      */
     const CAPABILITY_TAGS = ['image', 'audio', 'video', 'pdf', 'embedding']
+
+    /**
+     * This bundle's own copy, in the two locales dsh ships.
+     *
+     * `zh` is the key-set source of truth and `en` must cover every key — dsh's
+     * own convention, and the build gate asserts it. Nothing user-visible is
+     * inlined in a component: a locale switch re-renders every slot outlet (the
+     * renderer subscribes each one to the locale revision), so a stray literal
+     * would be the one string that never follows the switch.
+     *
+     * Wording rules this copy follows, matching dsh's own settings pages: short
+     * noun phrases for headings, full sentences for explanations, no jargon a
+     * user would have to look up — no config-file keys, no schema terms, no
+     * "Host endpoint"/"namespace" talk. Someone who only wants Kenari as a model
+     * provider should be able to read every line here.
+     */
+    const LOCALES = {
+      zh: {
+        nav: 'Kenari',
+        'page.title': 'Kenari',
+        'page.lead': '把 kenari.id 接成 dsh 的会话模型、网页搜索与抓取，以及一组 REST 工具。',
+
+        'connection.title': '密钥',
+        'connection.keyStatus': '密钥状态',
+        'connection.notice': '密钥本身在「模型」页的 Kenari 卡片里填。这里只显示它的状态和它存的名字，不会显示密钥本身。',
+        'connection.status.loading': '正在读取设置…',
+        'connection.status.unavailable': '当前部署的设置不可保存，改动只能在配置文件里做。',
+
+        'key.configured': '已配置',
+        'key.missing': '未配置',
+        'key.source': '来源 {source}',
+        'key.editable': '可修改',
+        'key.locked': '由启动环境提供，不可改',
+        'key.checking': '查询中…',
+        'key.checkFailed': '状态查询失败：{message}',
+        'key.missingRef': '没有这个引用',
+
+        'models.title': '模型',
+        'models.loading': '正在读取模型…',
+        'models.error': '模型列表读取失败：{message}',
+        'models.empty': '这个路由还没有模型。可以到「模型」页的 Kenari 卡片里添加，或重启 dsh 让内置模型生效。',
+        'models.summary': '路由 {route} 提供 {count} 个模型。',
+        'models.expandAll': '展开全部 {count} 个',
+        'models.routeEmpty': '空目录',
+        'models.noRoute': '没有可用的 Kenari 模型路由（{failures}）',
+        'ui.expand': '展开',
+        'ui.collapse': '收起',
+        'models.hint': '这里列出当前路由可用的模型。价格与完整目录（含向量、重排等非会话模型）用 kenari_list_models 查看。',
+        'models.context': '上下文 {size}',
+
+        'sessionTitle.title': '会话标题',
+        'sessionTitle.prefix': '新会话标题加时间前缀',
+        'sessionTitle.prefix.hint': '开启后新会话的标题会带上创建时间，方便按时间排序；已有会话不受影响。',
+
+        'advanced.title': '高级设置',
+        'advanced.hint': '这些参数多数只需要设置一次，改完下一次操作即生效。',
+
+        'field.baseURL': 'API 地址',
+        'field.baseURL.hint': '插件调用 Kenari API 用的地址，默认 https://kenari.id；写成 …/v1 也可以，插件自己归一。会话模型用的是「模型」页那张卡里的地址，两者互不影响。',
+        'field.apiKeyEnv': '密钥引用名',
+        'field.apiKeyEnv.hint': '密钥保存在这个名字下，与「模型」页那张卡是同一个。改它会让会话模型和工具指向不同的密钥，所以这里只读。',
+        'field.timeoutMs': '请求超时（毫秒）',
+        'field.generationTimeoutMs': '生成类超时（毫秒）',
+        'field.generationTimeoutMs.hint': '图像、语音、OCR 这类按次计费的调用。超时不会自动重试，避免重复扣费。',
+        'field.maxRetries': '失败重试次数',
+        'field.maxRetries.hint': '只对限流、超时和网络错误生效。',
+        'field.catalogCacheTtlMs': '模型目录缓存（毫秒）',
+        'field.docsCacheTtlMs': '文档缓存（毫秒）',
+        'field.balanceCacheTtlMs': '余额缓存（毫秒）',
+        'field.lowBalanceAlertRp': '余额提醒阈值（Rp）',
+        'field.lowBalanceAlertRp.hint': '余额低于这个数时，每次花费后会提醒一次；填 0 关闭。',
+        'field.sessionTitlePrefix': '前缀格式',
+        'field.sessionTitlePrefix.hint': '默认 yyyyMMddHHmmss-。yyyy 年、MM 月、dd 日、HH 时、mm 分、ss 秒，其余字符原样保留。',
+        'field.sessionTitleMaxBytes': '标题长度上限（字节）',
+        'field.sessionTitleMaxBytes.hint': '前缀加正文的总长度，超出会被截断，默认 96。',
+        'field.overridden': '已自定义',
+        'field.saved': '已保存',
+        'field.invalidNumber': '请填数字',
+        'field.on': '已开启',
+        'field.off': '已关闭',
+
+        'restart.title': '重启后生效',
+        'restart.hint': '这些开关在插件加载时决定，改完要重启 dsh 才会生效。它们保存在设置里，可以用右上角的「打开配置文件」编辑。',
+        'restart.search': '网页搜索',
+        'restart.fetch': '网页抓取',
+        'restart.fallback': '搜索或抓取失败时改用 dsh 自带方式',
+        'restart.tools': 'REST 工具',
+        'restart.budget': '会话预算封顶（Rp）',
+        'restart.budget.hint': '填 0 表示不封顶。',
+        'restart.nativeAdapter': '使用插件自带的模型适配器',
+        'restart.nativeProviderId': '适配器的路由名',
+
+        'usage.title': '余额与用量',
+        'usage.hint': '这些数字随用量变化，所以这里不显示会过期的快照。在对话里问一句，dsh 会替你查最新值：',
+        'usage.what': '想看什么',
+        'usage.ask': '在对话里这么问',
+        'usage.balance': '账户余额与近期用量',
+        'usage.balance.ask': '我的 Kenari 余额还剩多少？',
+        'usage.billing': '本次会话的花费与预算',
+        'usage.billing.ask': '这个会话花了多少钱，还在预算内吗？',
+        'usage.catalog': '模型目录、上下文长度与实时价格',
+        'usage.catalog.ask': '列出 Kenari 支持图片的模型和它们的价格',
+        'usage.tokens': '输入 token 与窗口占用',
+        'usage.tokens.ask': '这个会话的上下文用了多少？',
+
+        'catalog.title': '选择要添加的模型',
+        'catalog.description': '按能力与套餐筛选，勾选后加入 kenari 路由。',
+        'catalog.close': '关闭',
+        'catalog.cancel': '取消',
+        'catalog.searchPlaceholder': '搜索 id / 名称',
+        'catalog.searchLabel': '搜索模型',
+        'catalog.clear': '清除筛选',
+        'catalog.selectAll': '全选可见',
+        'catalog.clearAll': '取消全选',
+        'catalog.loading': '正在读取模型目录…',
+        'catalog.error': '模型目录读取失败：{message}',
+        'catalog.fallback': '改用 dsh 自带对话框',
+        'catalog.readonly': '设置只读，不能写入。',
+        'catalog.settingsReadOnly': '设置只读，改动只能在配置文件里做。',
+        'catalog.noNamespace': '设置里没有 {ns} 这一节，先让插件把预设写进去。',
+        'catalog.plansError': '套餐表读取失败，「套餐内」标签与筛选这次不可用：{message}',
+        'catalog.empty': '当前筛选下没有模型。',
+        'catalog.summary': '显示 {visible} / {total} 个，待加入 {addable} 个。「套餐内」表示这个付费模型由订阅套餐覆盖，否则走余额。',
+        'catalog.footerNote': '加入后立即生效',
+        'catalog.submit': '添加所选（{count}）',
+        'catalog.saving': '正在加入…',
+        'catalog.added': '已加入 {count} 个模型。模型页的列表要重新展开「编辑」才会刷新。',
+        'catalog.chatOnly': '（不支持会话）',
+        'catalog.inRoute': '已在路由',
+
+        'filter.plan': '套餐内',
+        'filter.free': '免费',
+        'tag.image': '图片',
+        'tag.audio': '音频',
+        'tag.video': '视频',
+        'tag.pdf': 'PDF',
+        'tag.embedding': '向量',
+      },
+      en: {
+        nav: 'Kenari',
+        'page.title': 'Kenari',
+        'page.lead': 'Kenari (kenari.id) as a session model provider, a web search and fetch backend, and a set of REST tools.',
+
+        'connection.title': 'API key',
+        'connection.keyStatus': 'Key status',
+        'connection.notice': 'The key itself is entered on the Models page, in the Kenari card. This panel only reports its state and the name it is stored under, never the key itself.',
+        'connection.status.loading': 'Reading settings…',
+        'connection.status.unavailable': 'Settings cannot be saved in this deployment; edit the configuration file instead.',
+
+        'key.configured': 'Configured',
+        'key.missing': 'Missing',
+        'key.source': 'From {source}',
+        'key.editable': 'Editable',
+        'key.locked': 'Provided by the launch environment, cannot be changed',
+        'key.checking': 'Checking…',
+        'key.checkFailed': 'Could not read the key status: {message}',
+        'key.missingRef': 'No such reference',
+
+        'models.title': 'Models',
+        'models.loading': 'Reading models…',
+        'models.error': 'Could not read the model list: {message}',
+        'models.empty': 'This route has no models yet. Add some on the Models page under the Kenari card, or restart dsh to load the built-in ones.',
+        'models.summary': 'Route {route} offers {count} models.',
+        'models.expandAll': 'Show all {count}',
+        'models.routeEmpty': 'empty catalog',
+        'models.noRoute': 'No usable Kenari model route ({failures})',
+        'ui.expand': 'Show',
+        'ui.collapse': 'Hide',
+        'models.hint': 'These are the models this route can use right now. Use kenari_list_models for pricing and the full catalog, including embedding and rerank models.',
+        'models.context': '{size} context',
+
+        'sessionTitle.title': 'Session titles',
+        'sessionTitle.prefix': 'Prefix new session titles with the time',
+        'sessionTitle.prefix.hint': 'New sessions get their creation time in the title, which keeps them sorted by time. Existing sessions are left alone.',
+
+        'advanced.title': 'Advanced',
+        'advanced.hint': 'Most of these are set once. Changes apply to the next operation.',
+
+        'field.baseURL': 'API address',
+        'field.baseURL.hint': 'The address the plugin calls for Kenari API requests. https://kenari.id by default; a trailing /v1 is accepted and normalized. Session models use the address on the Models page card instead — the two are independent.',
+        'field.apiKeyEnv': 'Key reference',
+        'field.apiKeyEnv.hint': 'The name the key is stored under, the same one the Models page card uses. Changing it would point the session models and the tools at different keys, so it is read-only here.',
+        'field.timeoutMs': 'Request timeout (ms)',
+        'field.generationTimeoutMs': 'Generation timeout (ms)',
+        'field.generationTimeoutMs.hint': 'For per-call billed work such as images, speech and OCR. A timeout is never retried, so a slow call cannot be paid for twice.',
+        'field.maxRetries': 'Retries on failure',
+        'field.maxRetries.hint': 'Applies to rate limits, timeouts and network errors only.',
+        'field.catalogCacheTtlMs': 'Model catalog cache (ms)',
+        'field.docsCacheTtlMs': 'Documentation cache (ms)',
+        'field.balanceCacheTtlMs': 'Balance cache (ms)',
+        'field.lowBalanceAlertRp': 'Low balance alert (Rp)',
+        'field.lowBalanceAlertRp.hint': 'After a billed call, warn once when the balance falls below this. Set 0 to turn the warning off.',
+        'field.sessionTitlePrefix': 'Prefix format',
+        'field.sessionTitlePrefix.hint': 'yyyyMMddHHmmss- by default. yyyy year, MM month, dd day, HH hour, mm minute, ss second; anything else is kept as typed.',
+        'field.sessionTitleMaxBytes': 'Title length cap (bytes)',
+        'field.sessionTitleMaxBytes.hint': 'Prefix plus title, in bytes. Anything longer is truncated. 96 by default.',
+        'field.overridden': 'Customized',
+        'field.saved': 'Saved',
+        'field.invalidNumber': 'Enter a number',
+        'field.on': 'On',
+        'field.off': 'Off',
+
+        'restart.title': 'Applies after a restart',
+        'restart.hint': 'These switches are decided when the plugin loads, so changing them needs a dsh restart. They live in your settings, editable through "Open configuration file" at the top right.',
+        'restart.search': 'Web search',
+        'restart.fetch': 'Web fetch',
+        'restart.fallback': 'Fall back to the built-in way when search or fetch fails',
+        'restart.tools': 'REST tools',
+        'restart.budget': 'Session budget cap (Rp)',
+        'restart.budget.hint': 'Set 0 for no cap.',
+        'restart.nativeAdapter': 'Use the bundled model adapter',
+        'restart.nativeProviderId': 'Adapter route name',
+
+        'usage.title': 'Balance and usage',
+        'usage.hint': 'These numbers move with usage, so no snapshot is shown here that would go stale. Ask in the chat and dsh looks up the current value:',
+        'usage.what': 'What you want',
+        'usage.ask': 'Ask in the chat',
+        'usage.balance': 'Account balance and recent usage',
+        'usage.balance.ask': 'How much Kenari balance do I have left?',
+        'usage.billing': 'Spend and budget for this session',
+        'usage.billing.ask': 'How much has this session cost, and am I still within budget?',
+        'usage.catalog': 'Model catalog, context lengths and live pricing',
+        'usage.catalog.ask': 'List the Kenari models that take images, with their prices',
+        'usage.tokens': 'Input tokens and context usage',
+        'usage.tokens.ask': 'How much of my context window is this session using?',
+
+        'catalog.title': 'Choose models to add',
+        'catalog.description': 'Filter by capability and plan, then pick the ones to write into the kenari route.',
+        'catalog.close': 'Close',
+        'catalog.cancel': 'Cancel',
+        'catalog.searchPlaceholder': 'Search id or name',
+        'catalog.searchLabel': 'Search models',
+        'catalog.clear': 'Clear filters',
+        'catalog.selectAll': 'Select all shown',
+        'catalog.clearAll': 'Clear selection',
+        'catalog.loading': 'Reading the model catalog…',
+        'catalog.error': 'Could not read the model catalog: {message}',
+        'catalog.fallback': 'Use the built-in dialog instead',
+        'catalog.readonly': 'Settings are read-only; nothing can be written.',
+        'catalog.settingsReadOnly': 'Settings are read-only; changes have to go in the configuration file.',
+        'catalog.noNamespace': 'Your settings have no {ns} section yet. Let the plugin write its preset first.',
+        'catalog.plansError': 'Could not read the plan table, so the "In plan" tag and filter are unavailable this time: {message}',
+        'catalog.empty': 'No model matches these filters.',
+        'catalog.summary': 'Showing {visible} of {total}, {addable} ready to add. "In plan" means a subscription covers this paid model; otherwise it is billed to your balance.',
+        'catalog.footerNote': 'Applies immediately',
+        'catalog.submit': 'Add selected ({count})',
+        'catalog.saving': 'Adding…',
+        'catalog.added': 'Added {count} models. The list on the Models page refreshes once you reopen Edit.',
+        'catalog.chatOnly': '(not a chat model)',
+        'catalog.inRoute': 'Already in the route',
+
+        'filter.plan': 'In plan',
+        'filter.free': 'Free',
+        'tag.image': 'image',
+        'tag.audio': 'audio',
+        'tag.video': 'video',
+        'tag.pdf': 'PDF',
+        'tag.embedding': 'embedding',
+      },
+    }
+
+    /**
+     * The translator, bound once per activation.
+     *
+     * Bound from the locale service rather than taken from props: `bind` returns
+     * an identity-stable function that reads the active locale at call time, so
+     * this bundle never has to thread `t` through six components. The outlets
+     * re-render on every locale switch (the renderer subscribes each one to the
+     * locale revision), and that re-render is what re-reads these strings.
+     */
+    let t = (key) => key
 
     /**
      * Marks the Kenari card in the DOM. The Models-page component renders it
@@ -115,37 +386,98 @@ window.__ModuleLoader__.load({
       document.head.appendChild(style)
     }
 
-    /** Scalar fields the Host reads live, so an edit applies at the next operation. */
-    const LIVE_FIELDS = [
-      { field: 'baseURL', label: 'API base URL', kind: 'string', hint: '[OI]/Responses 线为 https://kenari.id/v1；Anthropic 线为 https://kenari.id（不带 /v1）。形状错误会返回 405。' },
-      { field: 'apiKeyEnv', label: '凭据引用名', kind: 'string', hint: '环境变量名，例如 KENARI_API_KEY。key 的值只存在于凭据存储或进程环境里。' },
-      { field: 'timeoutMs', label: '单次请求超时（毫秒）', kind: 'number' },
-      { field: 'generationTimeoutMs', label: '生成类超时（毫秒）', kind: 'number', hint: '图像/视频/OCR 等按次计费的调用；超时后不自动重试，避免重复扣费。' },
-      { field: 'maxRetries', label: '瞬时失败重试次数', kind: 'number', hint: '仅对 429/408/5xx 与网络错误生效。' },
-      { field: 'catalogCacheTtlMs', label: '模型目录缓存 TTL（毫秒）', kind: 'number' },
-      { field: 'docsCacheTtlMs', label: '文档缓存 TTL（毫秒）', kind: 'number' },
-      { field: 'balanceCacheTtlMs', label: '余额缓存 TTL（毫秒）', kind: 'number' },
-      { field: 'lowBalanceAlertRp', label: '余额告警阈值（Rp，0 关闭）', kind: 'number' },
+
+    /**
+     * Set-once and diagnostic parameters; folded away until asked for.
+     *
+     * `baseURL` lives here rather than in a user-facing group because it is not
+     * a user setting: the address defaults to Kenari's one public endpoint. It
+     * used to sit in an open 「连接」 group beside the Models page's own Kenari
+     * card, which showed a *different* address (the model wire endpoint) — two
+     * panels that looked like one thing, in two places, disagreeing.
+     */
+    const ADVANCED_FIELDS = [
+      { field: 'baseURL', labelKey: 'field.baseURL', hintKey: 'field.baseURL.hint', kind: 'string' },
+      { field: 'timeoutMs', labelKey: 'field.timeoutMs', kind: 'number' },
+      { field: 'generationTimeoutMs', labelKey: 'field.generationTimeoutMs', hintKey: 'field.generationTimeoutMs.hint', kind: 'number' },
+      { field: 'maxRetries', labelKey: 'field.maxRetries', hintKey: 'field.maxRetries.hint', kind: 'number' },
+      { field: 'catalogCacheTtlMs', labelKey: 'field.catalogCacheTtlMs', kind: 'number' },
+      { field: 'docsCacheTtlMs', labelKey: 'field.docsCacheTtlMs', kind: 'number' },
+      { field: 'balanceCacheTtlMs', labelKey: 'field.balanceCacheTtlMs', kind: 'number' },
+      { field: 'lowBalanceAlertRp', labelKey: 'field.lowBalanceAlertRp', hintKey: 'field.lowBalanceAlertRp.hint', kind: 'number' },
     ]
 
-    /** Fields fixed when the plugin loads: the provider/ledger wiring they decide. */
+    /**
+     * The name the key is stored under — read-only, and shown in the 密钥 group
+     * beside the key's status rather than behind a fold.
+     *
+     * It belongs with the key, not with the set-once parameters: "which key is
+     * this page talking about" and "which name is it stored under" are one
+     * question, and splitting them put half the answer in a collapsed group.
+     *
+     * Read-only because renaming it would leave the model route resolving the
+     * old reference (sessions fail with MISSING_CREDENTIAL) while the plugin's
+     * tools keep working — a split that is invisible until a session breaks.
+     */
+    const KEY_REFERENCE_FIELD = { field: 'apiKeyEnv', labelKey: 'field.apiKeyEnv', hintKey: 'field.apiKeyEnv.hint', kind: 'readonly' }
+
+    /**
+     * The session-title settings, all of them, in one group that is never folded.
+     *
+     * The switch, the format and the length cap are one feature: the switch says
+     * whether a prefix is written at all, and the other two say what it looks
+     * like. Splitting the format and the cap off into 高级设置 made the reader
+     * hunt in a second place for the other half of the thing they were editing.
+     *
+     * `sessionTitlePrefix` is part of the title text itself — dsh's title event
+     * carries no separate prefix field — so these fields only decide what gets
+     * written when a title is generated. They are not a display filter and they
+     * do not reach back into existing sessions.
+     */
+    const SESSION_TITLE_FIELDS = [
+      { field: 'sessionTitlePrefixEnabled', labelKey: 'sessionTitle.prefix', hintKey: 'sessionTitle.prefix.hint', kind: 'boolean' },
+      { field: 'sessionTitlePrefix', labelKey: 'field.sessionTitlePrefix', hintKey: 'field.sessionTitlePrefix.hint', kind: 'string' },
+      { field: 'sessionTitleMaxBytes', labelKey: 'field.sessionTitleMaxBytes', hintKey: 'field.sessionTitleMaxBytes.hint', kind: 'number' },
+    ]
+
+    /**
+     * The switches that are decided when the plugin loads. They are read-only
+     * here on purpose: a switch that does nothing until dsh restarts invites
+     * "I turned it off and nothing happened", so this block states the values
+     * and where to change them rather than offering a control that lies.
+     */
     const RESTART_FIELDS = [
-      { field: 'searchEnabled', label: '注册 Kenari 搜索 provider' },
-      { field: 'fetchEnabled', label: '注册 Kenari 抓取 provider' },
-      { field: 'fallbackEnabled', label: '调用失败时回退 dsh 默认 provider' },
-      { field: 'toolsEnabled', label: '注册 kenari_* REST 工具' },
-      { field: 'budgetCapRp', label: '会话预算封顶（Rp，0 不封顶）' },
-      { field: 'nativeAdapterEnabled', label: '启用插件自带的 Kenari LlmAdapter' },
-      { field: 'nativeProviderId', label: '自带 adapter 的 provider 路由名' },
+      { field: 'searchEnabled', labelKey: 'restart.search' },
+      { field: 'fetchEnabled', labelKey: 'restart.fetch' },
+      { field: 'fallbackEnabled', labelKey: 'restart.fallback' },
+      { field: 'toolsEnabled', labelKey: 'restart.tools' },
+      { field: 'budgetCapRp', labelKey: 'restart.budget', hintKey: 'restart.budget.hint' },
+      { field: 'nativeAdapterEnabled', labelKey: 'restart.nativeAdapter' },
+      { field: 'nativeProviderId', labelKey: 'restart.nativeProviderId' },
     ]
 
-    /** Facts that need a Host endpoint the plugin does not own; the tools carry them. */
+    /**
+     * What this page deliberately does not show, and how to ask for it instead.
+     *
+     * The second element is the question a reader can actually type. It replaced
+     * the tool name that used to sit there: the table was legible and useless,
+     * because a tool name is not something a user can call — the agent is. Both
+     * elements are locale keys, so the examples follow a language switch.
+     */
     const TOOL_ONLY_FACTS = [
-      ['钱包余额与用量', 'kenari_balance / kenari_usage（走 Kenari MCP，需自己账号的 key）'],
-      ['本次会话计费统计与预算', 'kenari_billing'],
-      ['模型目录、上下文窗口与实时价格', 'kenari_list_models'],
-      ['输入 token 与窗口占比', 'kenari_count_tokens'],
+      { what: 'usage.balance', ask: 'usage.balance.ask' },
+      { what: 'usage.billing', ask: 'usage.billing.ask' },
+      { what: 'usage.catalog', ask: 'usage.catalog.ask' },
+      { what: 'usage.tokens', ask: 'usage.tokens.ask' },
     ]
+
+    /**
+     * Every spec whose label and hint are locale keys. The build gate resolves
+     * each one against both dictionaries, which is the only way a renamed or
+     * misspelled key fails at build time instead of rendering as the raw key
+     * `field.timeoutMs` on the page.
+     */
+    const LOCALE_SPECS = ADVANCED_FIELDS.concat([KEY_REFERENCE_FIELD], SESSION_TITLE_FIELDS, RESTART_FIELDS)
 
     /**
      * The selection box every row starts with, in both of its forms: a real
@@ -156,12 +488,27 @@ window.__ModuleLoader__.load({
      */
     const PICK_BOX = { width: '14px', height: '14px', flexShrink: 0, margin: 0, boxSizing: 'border-box' }
 
+    /** The one monospace stack this page uses, for the things that are ids. */
+    const MONO_FONT = 'ui-monospace, SFMono-Regular, Menlo, monospace'
+
+    /**
+     * The one chip shape this page uses — the key-status badges and every
+     * read-only value wear it, so "value" is a shape a reader learns once. Only
+     * the shape is shared: the value chip is set a step larger and at full
+     * strength, because it carries the payload while the label is its caption.
+     */
+    const CHIP = { display: 'inline-block', padding: '1px 7px', borderRadius: '999px', border: '1px solid rgba(127,127,127,0.4)' }
+
     const styles = {
       root: { display: 'flex', flexDirection: 'column', gap: '18px', fontSize: '13px', lineHeight: 1.6 },
       title: { margin: 0, fontSize: '15px', fontWeight: 600 },
       lead: { margin: 0, opacity: 0.75 },
       block: { border: '1px solid rgba(127,127,127,0.28)', borderRadius: '8px', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '10px' },
       blockTitle: { margin: 0, fontSize: '13px', fontWeight: 600 },
+      // A foldable block head: the whole row is the hit target, and the state
+      // word sits at the far end so it can be found without hunting for a caret.
+      disclosure: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', width: '100%', padding: 0, border: 'none', background: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer', textAlign: 'left' },
+      disclosureMark: { opacity: 0.6, fontSize: '12px', whiteSpace: 'nowrap' },
       row: { display: 'grid', gridTemplateColumns: 'minmax(160px, 260px) 1fr', gap: '8px 12px', alignItems: 'center' },
       label: { opacity: 0.85 },
       hint: { gridColumn: '2 / 3', opacity: 0.6, fontSize: '12px', marginTop: '-4px' },
@@ -169,10 +516,16 @@ window.__ModuleLoader__.load({
       checkboxRow: { display: 'flex', alignItems: 'center', gap: '8px' },
       pickBox: PICK_BOX,
       pickMark: { ...PICK_BOX, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', lineHeight: 1, opacity: 0.75 },
-      mono: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
-      badge: { display: 'inline-block', padding: '1px 7px', borderRadius: '999px', border: '1px solid rgba(127,127,127,0.4)', fontSize: '11px', opacity: 0.85 },
+      mono: { fontFamily: MONO_FONT },
+      badge: { ...CHIP, fontSize: '11px', opacity: 0.85 },
+      // A read-only value, deliberately NOT the label's plain text: the two used
+      // to sit one above the other in the same 13px tone, so "网页搜索" and
+      // "已开启" read as two labels. The chip gives the value its own shape, and
+      // the monospace keeps `KENARI_API_KEY` / `kenari-direct` legible as ids.
+      value: { ...CHIP, fontSize: '12px', fontFamily: MONO_FONT },
       table: { width: '100%', borderCollapse: 'collapse' },
       cell: { textAlign: 'left', padding: '3px 6px', borderBottom: '1px solid rgba(127,127,127,0.18)', verticalAlign: 'top' },
+      th: { fontWeight: 600, opacity: 0.6, fontSize: '12px' },
       notice: { margin: 0, opacity: 0.7, fontSize: '12px' },
       error: { margin: 0, color: '#c0392b', fontSize: '12px' },
       toolbar: { display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' },
@@ -202,7 +555,7 @@ window.__ModuleLoader__.load({
       // and the tags wrap inside their own column instead of restarting at the
       // row's left edge.
       item: { display: 'flex', flexWrap: 'nowrap', gap: '10px', alignItems: 'center', padding: '7px 8px', cursor: 'default' },
-      itemId: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'nowrap', flexShrink: 0 },
+      itemId: { fontFamily: MONO_FONT, whiteSpace: 'nowrap', flexShrink: 0 },
       tagColumn: { display: 'flex', flexWrap: 'wrap', gap: '4px 8px', alignItems: 'center', flex: '1 1 auto', minWidth: 0 },
       // The body stacks four things that answer different questions (what can I
       // filter, how many are showing, the rows, what just happened); a gap keeps
@@ -223,13 +576,58 @@ window.__ModuleLoader__.load({
      * One editable scalar. The draft is local until commit (blur or Enter), so a
      * half-typed number never lands in the settings document.
      */
+    /**
+     * One live field. The Host reads these live, so an edit applies at the next
+     * operation; the badge says saved and promises nothing about timing.
+     */
     function LiveField(props) {
       const { spec, committed, overridden, writable, onWrite } = props
+      const label = t(spec.labelKey)
+      const hint = spec.hintKey === undefined ? undefined : t(spec.hintKey)
       const [draft, setDraft] = React.useState(String(committed ?? ''))
       const [status, setStatus] = React.useState('idle')
       React.useEffect(() => {
         setDraft(String(committed ?? ''))
       }, [committed])
+
+      // A boolean is a switch, so the click IS the write and what it writes is
+      // the requested state — there is no draft, and therefore no blur or Enter
+      // step to reach for.
+      if (spec.kind === 'boolean') {
+        const checked = committed === true
+        const toggle = (next) => {
+          if (next === checked) return
+          setStatus('saving')
+          onWrite(spec.field, next).then(
+            () => setStatus('saved'),
+            (err) => setStatus(`error:${String(err && err.message ? err.message : err)}`),
+          )
+        }
+        return React.createElement(
+          React.Fragment,
+          null,
+          React.createElement(
+            'div',
+            { style: styles.label },
+            label,
+            overridden ? React.createElement('span', { style: { ...styles.badge, marginLeft: '8px' } }, t('field.overridden')) : null,
+            status === 'saved' ? React.createElement('span', { style: { ...styles.badge, marginLeft: '8px' } }, t('field.saved')) : null,
+            typeof status === 'string' && status.startsWith('error:') ? React.createElement('span', { style: { ...styles.error, marginLeft: '8px' } }, status.slice(6)) : null,
+          ),
+          React.createElement(
+            'div',
+            { style: styles.checkboxRow },
+            React.createElement(Switch, {
+              checked,
+              label,
+              disabled: !writable || status === 'saving',
+              onChange: toggle,
+            }),
+            React.createElement('span', { style: styles.dim }, checked ? t('field.on') : t('field.off')),
+          ),
+          hint === undefined ? null : React.createElement('div', { style: styles.hint }, hint),
+        )
+      }
 
       const commit = () => {
         const next = spec.kind === 'number' ? Number(draft) : draft
@@ -254,10 +652,10 @@ window.__ModuleLoader__.load({
         React.createElement(
           'div',
           { style: styles.label },
-          spec.label,
-          overridden ? React.createElement('span', { style: { ...styles.badge, marginLeft: '8px' } }, '已覆盖') : null,
-          status === 'saved' ? React.createElement('span', { style: { ...styles.badge, marginLeft: '8px' } }, '已保存') : null,
-          status === 'invalid' ? React.createElement('span', { style: { ...styles.error, marginLeft: '8px' } }, '不是合法数字') : null,
+          label,
+          overridden ? React.createElement('span', { style: { ...styles.badge, marginLeft: '8px' } }, t('field.overridden')) : null,
+          status === 'saved' ? React.createElement('span', { style: { ...styles.badge, marginLeft: '8px' } }, t('field.saved')) : null,
+          status === 'invalid' ? React.createElement('span', { style: { ...styles.error, marginLeft: '8px' } }, t('field.invalidNumber')) : null,
           typeof status === 'string' && status.startsWith('error:') ? React.createElement('span', { style: { ...styles.error, marginLeft: '8px' } }, status.slice(6)) : null,
         ),
         React.createElement('input', {
@@ -271,22 +669,63 @@ window.__ModuleLoader__.load({
             if (event.key === 'Enter') commit()
           },
         }),
-        spec.hint ? React.createElement('div', { style: styles.hint }, spec.hint) : null,
+        hint === undefined ? null : React.createElement('div', { style: styles.hint }, hint),
       )
     }
 
-    /** One load-time boolean, rendered read-only with its restart caveat. */
-    function RestartField(props) {
+    /**
+     * One read-only value with its label: a load-time switch, or a setting that
+     * is deliberately not editable from this page.
+     *
+     * Label left, value right, on one line — the same two-column grid the key
+     * status row above uses. The value wears a pill (see `styles.value`), which
+     * is the whole point: stacked as two plain lines the label and the value
+     * were indistinguishable, and a value that does not look like a value reads
+     * as a second label.
+     *
+     * No per-row "restart required" badge — the block states that once, and seven
+     * identical badges only train the reader to skip them. A boolean reads as
+     * on/off rather than as `true`/`false`, because nothing here is a config file.
+     */
+    function ReadOnlyRow(props) {
+      const { spec, value } = props
+      const shown = typeof value === 'boolean' ? (value ? t('field.on') : t('field.off')) : String(value)
       return React.createElement(
-        React.Fragment,
-        null,
-        React.createElement('div', { style: styles.label }, props.spec.label),
+        'div',
+        { style: styles.row },
+        React.createElement('div', { style: styles.label }, t(spec.labelKey)),
+        React.createElement('div', null, React.createElement('span', { style: styles.value }, shown)),
+        spec.hintKey === undefined ? null : React.createElement('div', { style: styles.hint }, t(spec.hintKey)),
+      )
+    }
+
+    /**
+     * A block whose body folds away, used for the parameters most readers never
+     * touch. The whole heading row is the hit target — a fold that can only be
+     * opened by hitting a 12px caret is a fold nobody opens — and `aria-expanded`
+     * is what makes that row read as a control rather than as a label.
+     */
+    function Disclosure(props) {
+      const { title, hint, children, defaultOpen } = props
+      const [open, setOpen] = React.useState(defaultOpen === true)
+      return React.createElement(
+        'div',
+        { style: styles.block },
         React.createElement(
-          'div',
-          { style: styles.checkboxRow },
-          React.createElement('code', { style: styles.mono }, String(props.value)),
-          React.createElement('span', { style: styles.badge }, '重启后生效'),
+          'button',
+          {
+            type: 'button',
+            style: styles.disclosure,
+            'aria-expanded': open,
+            onClick: () => {
+              setOpen(!open)
+            },
+          },
+          React.createElement('span', { style: styles.blockTitle }, title),
+          React.createElement('span', { style: styles.disclosureMark }, open ? t('ui.collapse') : t('ui.expand')),
         ),
+        hint === undefined ? null : React.createElement('p', { style: styles.notice }, hint),
+        open ? children : null,
       )
     }
 
@@ -500,12 +939,161 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Everything the catalog shows and does, in one hook feeding every entry
-     * point (the card's two taken-over buttons and the Kenari settings page),
-     * so a filter or a write behaves identically wherever the reader opened it.
+     * The Kenari glyph on the settings panel's own nav rail.
+     *
+     * dsh's shell picks that glyph from a hardcoded id switch (`navIcon(row.id)`:
+     * models / agent-presets / plugins, else the settings gear) and a section's
+     * registration carries only `id`/`order`/`label` — there is no icon field to
+     * fill in. What a plugin CAN own is the DOM, and the row for our own section
+     * is the one nav button whose label is our own label. So the swap is done
+     * here, and the image comes from this plugin's same-origin route
+     * (`/api/kenari.favicon`), the same way the catalog view does.
+     *
+     * The glyph is NOT replaced: dsh's `<svg>` stays exactly where React put it
+     * and the injected rule only hides it. React deletes the whole panel subtree
+     * when settings closes and calls `removeChild` for every host node it
+     * rendered, so a node this bundle had detached would throw there — an
+     * `Uncaught NotFoundError` on every close, from code that looks fine.
+     *
+     * Fail-open: the attribute is set only after the image has actually loaded,
+     * so a 404 (a deploy whose package omits `assets/`) leaves dsh's gear alone
+     * instead of leaving an empty 16px hole.
+     */
+    const NAV_ICON_ATTR = 'data-kenari-nav-icon'
+
+    /**
+     * The injected `<style>`'s own marker. Deliberately NOT `NAV_ICON_ATTR`: the
+     * two would otherwise be indistinguishable to `[data-kenari-nav-icon]`, and
+     * the row lookup would have to care which of the two it had matched.
+     */
+    const NAV_ICON_STYLE_ATTR = 'data-kenari-nav-icon-style'
+
+    /** Where the browser fetches the glyph; must match `KENARI_FAVICON_PATH`. */
+    const NAV_ICON_URL = '/api/kenari.favicon'
+
+    /** Must match the `label` this bundle registers for its settings section. */
+    const SETTINGS_SECTION_LABEL = 'Kenari'
+
+    /**
+     * Scope for the row lookup. The settings panel is the only dialog on the
+     * page that renders a nav rail, and "Kenari" is also painted well outside
+     * it (the Models page's route row, the composer's model menu), so the match
+     * is confined to a `<nav>` inside a `[role="dialog"]` rather than to any
+     * button anywhere.
+     */
+    const NAV_ROW_SELECTOR = '[role="dialog"] nav button'
+
+    /**
+     * The settings nav rail's button for one section label, or null.
+     *
+     * Text is the only stable identity a nav row has — its class is a CSS-module
+     * hash and its position moves with the registered order — which is the same
+     * reason the 模型目录 takeover matches labels.
+     */
+    function settingsNavButton(root, label) {
+      const buttons = root.querySelectorAll(NAV_ROW_SELECTOR)
+      for (let index = 0; index < buttons.length; index += 1) {
+        const text = typeof buttons[index].textContent === 'string' ? buttons[index].textContent.trim() : ''
+        if (text === label) return buttons[index]
+      }
+      return null
+    }
+
+    /** The rule that swaps dsh's nav glyph for this plugin's icon. */
+    function navIconRule() {
+      return `[${NAV_ICON_ATTR}] svg{display:none}`
+        + `[${NAV_ICON_ATTR}]::before{content:"";flex:none;width:16px;height:16px;border-radius:4px;`
+        + `background:url("${NAV_ICON_URL}") center/contain no-repeat}`
+    }
+
+    /** Inject the nav-icon rule once, so the first paint of the panel already has it. */
+    function ensureNavIconStyle() {
+      if (document.querySelector(`style[${NAV_ICON_STYLE_ATTR}]`) !== null) return
+      const style = document.createElement('style')
+      style.setAttribute(NAV_ICON_STYLE_ATTR, '')
+      style.textContent = navIconRule()
+      document.head.appendChild(style)
+    }
+
+    /**
+     * Mark the nav row owning one section label, if it is on the page.
+     *
+     * The `::before` icon is 16px and `flex: none`, and the svg it hides is
+     * 16px and `flex: none` too, so the row's geometry (icon, 8px gap, label)
+     * is byte-for-byte what dsh laid out.
+     */
+    function markNavRow(root, label) {
+      const button = settingsNavButton(root, label)
+      if (button === null) return null
+      button.setAttribute(NAV_ICON_ATTR, '')
+      return button
+    }
+
+    /** Whether the route actually serves the image; the licence to hide dsh's glyph. */
+    let navIconReady = false
+
+    /** The row already marked, while it is still connected — the lookup's short-circuit. */
+    let navRow = null
+
+    function patchSettingsNavIcon(root) {
+      if (!navIconReady) return false
+      if (navRow !== null && navRow.isConnected === true) return true
+      navRow = markNavRow(root, SETTINGS_SECTION_LABEL)
+      return navRow !== null
+    }
+
+    /**
+     * Put the icon on the nav rail.
+     *
+     * The panel mounts only while settings is open, so the row is found by
+     * watching for the panel's own insertion rather than by polling: the
+     * document-wide lookup runs only for a mutation that could have added a
+     * dialog, and short-circuits on the remembered row while it is connected.
+     * Plain chat streaming — every other mutation in this app — never reaches
+     * the lookup at all.
+     */
+    function installSettingsNavIcon() {
+      ensureNavIconStyle()
+      // The probe is what licenses hiding the gear: `onload` proves the route
+      // answers, `onerror` silently leaves dsh's own glyph in place.
+      const probe = document.createElement('img')
+      probe.onload = () => {
+        navIconReady = true
+        patchSettingsNavIcon(document)
+      }
+      probe.onerror = () => {}
+      probe.src = NAV_ICON_URL
+
+      const observer = new MutationObserver((records) => {
+        for (const record of records) {
+          for (const node of record.addedNodes) {
+            if (node.nodeType !== 1) continue
+            // The panel's root is the overlay, not the dialog itself, so both
+            // the node and its subtree are asked.
+            if (node.matches('[role="dialog"]') || node.querySelector('[role="dialog"]') !== null) {
+              patchSettingsNavIcon(document)
+              return
+            }
+          }
+        }
+      })
+      if (document.body !== null && document.body !== undefined) {
+        observer.observe(document.body, { childList: true, subtree: true })
+      }
+      return () => observer.disconnect()
+    }
+
+    /**
+     * Everything the catalog shows and does, in one hook feeding the dialog's
+     * every part, so the toolbar, the summary and the write all agree on what is
+     * currently filtered.
+     *
+     * There is one dialog. The Kenari settings page used to open a second,
+     * read-only copy of it; that page now points at the Models page instead,
+     * because a catalog browser that cannot add anything just duplicated it.
      */
     function useCatalogPanel(props) {
-      const { allowAdd, routeNs, routeProvider, loadPanel, addModels } = props
+      const { routeNs, routeProvider, loadPanel, addModels } = props
       const [state, setState] = React.useState({ status: 'loading' })
       const [reloads, setReloads] = React.useState(0)
       const [query, setQuery] = React.useState('')
@@ -518,7 +1106,7 @@ window.__ModuleLoader__.load({
       // render, and the state it sets re-renders — an endless fetch loop.
       React.useEffect(() => {
         let live = true
-        const route = allowAdd && routeNs !== undefined && routeProvider !== undefined
+        const route = routeNs !== undefined && routeProvider !== undefined
           ? { settingsNs: routeNs, provider: routeProvider }
           : undefined
         setState({ status: 'loading' })
@@ -533,7 +1121,7 @@ window.__ModuleLoader__.load({
         return () => {
           live = false
         }
-      }, [loadPanel, reloads, allowAdd, routeNs, routeProvider])
+      }, [loadPanel, reloads, routeNs, routeProvider])
 
       const view = state.status === 'ready' ? state.panel.view : {}
       const routeState = state.status === 'ready' ? state.panel.route : undefined
@@ -569,10 +1157,7 @@ window.__ModuleLoader__.load({
         addModels({ settingsNs: routeNs, provider: routeProvider }, profiles).then(
           (result) => {
             setWrite(result.ok === true
-              ? {
-                status: 'added',
-                message: `已加入 ${String(profiles.length)} 个模型（立即生效）。编辑器里的列表要重新展开「编辑」才刷新。`,
-              }
+              ? { status: 'added', message: t('catalog.added', { count: profiles.length }) }
               : { status: 'error', message: result.message })
             if (result.ok === true) {
               setPicked([])
@@ -584,6 +1169,19 @@ window.__ModuleLoader__.load({
       }
 
       return { state, view, routeState, derived, query, setQuery, flags, picked, write, toggleFlag, togglePick, toggleVisible, clearFilters, submit }
+    }
+
+    /**
+     * How a capability id reads to a person. The ids stay the host's vocabulary
+     * — they are what `kenari_list_models` reports and what the filter matches —
+     * so only the display is translated. An id with no translation prints as
+     * itself rather than as a missing-key artifact, which is what lets the host
+     * add a capability without this bundle shipping a new string.
+     */
+    function tagLabel(tag) {
+      const key = `tag.${tag}`
+      const label = t(key)
+      return label === key ? tag : label
     }
 
     /** The search box, the filter chips, and the select-all control. */
@@ -604,7 +1202,7 @@ window.__ModuleLoader__.load({
             panel.toggleFlag(tag)
           },
         },
-        tag === 'plan' ? '套餐内' : tag === 'free' ? '免费' : tag,
+        tag === 'plan' ? t('filter.plan') : tag === 'free' ? t('filter.free') : tagLabel(tag),
       ))
       return React.createElement(
         'div',
@@ -616,8 +1214,8 @@ window.__ModuleLoader__.load({
             style: styles.search,
             type: 'search',
             value: panel.query,
-            placeholder: '搜索 id / 名称 / 厂商',
-            'aria-label': '搜索模型',
+            placeholder: t('catalog.searchPlaceholder'),
+            'aria-label': t('catalog.searchLabel'),
             onChange: (event) => {
               panel.setQuery(event.target.value)
             },
@@ -625,9 +1223,9 @@ window.__ModuleLoader__.load({
           React.createElement(
             Button,
             { variant: 'ghost', size: 'sm', disabled: panel.derived.visible.length === 0, onClick: panel.toggleVisible },
-            panel.derived.allVisiblePicked ? '取消全选' : '全选可见',
+            panel.derived.allVisiblePicked ? t('catalog.clearAll') : t('catalog.selectAll'),
           ),
-          React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: panel.clearFilters }, '清除筛选'),
+          React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: panel.clearFilters }, t('catalog.clear')),
         ),
         React.createElement('div', { style: styles.filterRow }, chips),
       )
@@ -635,21 +1233,23 @@ window.__ModuleLoader__.load({
 
     /** What the current filter is showing, and what the one non-obvious tag means. */
     function CatalogSummary(props) {
-      const { derived, allowAdd } = props
+      const { derived } = props
       return React.createElement(
         'p',
         { style: styles.notice },
-        `显示 ${String(derived.visible.length)} / ${String(derived.models.length)} 个模型`
-        + (allowAdd ? `，待加入 ${String(derived.addable.length)} 个` : '')
-        + '。「套餐内」= 付费模型由订阅套餐覆盖，否则走余额。',
+        t('catalog.summary', {
+          visible: derived.visible.length,
+          total: derived.models.length,
+          addable: derived.addable.length,
+        }),
       )
     }
 
     /** The model rows: pick box, id, then the tag column. */
     function CatalogRows(props) {
-      const { derived, allowAdd, picked, togglePick } = props
+      const { derived, picked, togglePick } = props
       if (derived.visible.length === 0) {
-        return React.createElement('p', { style: styles.notice }, '当前筛选下没有模型。')
+        return React.createElement('p', { style: styles.notice }, t('catalog.empty'))
       }
       return React.createElement(
         'div',
@@ -657,21 +1257,19 @@ window.__ModuleLoader__.load({
         derived.visible.map((model) => React.createElement(
           'label',
           { key: model.id, style: styles.item },
-          // The pick column exists only where a pick is possible. In the
-          // read-only dialog there is no route to check against, so an empty
-          // box would be a blank column in front of every row.
-          allowAdd
-            ? derived.known[model.id] !== true
-              ? React.createElement('input', {
-                type: 'checkbox',
-                style: styles.pickBox,
-                checked: picked.indexOf(model.id) !== -1,
-                onChange: () => {
-                  togglePick(model.id)
-                },
-              })
-              : React.createElement('span', { style: styles.pickMark }, '✓')
-            : null,
+          // A model already in the route cannot be picked again, so its cell is
+          // a ✓ in the very box the checkboxes occupy: the column keeps one
+          // width and the row still reports what it is.
+          derived.known[model.id] !== true
+            ? React.createElement('input', {
+              type: 'checkbox',
+              style: styles.pickBox,
+              checked: picked.indexOf(model.id) !== -1,
+              onChange: () => {
+                togglePick(model.id)
+              },
+            })
+            : React.createElement('span', { style: styles.pickMark }, '✓'),
           // The id alone: it is the exact string a request and the route entry
           // use, and the vendor's display name beside it only made every row
           // wider without adding anything a reader acts on. The name still
@@ -692,13 +1290,13 @@ window.__ModuleLoader__.load({
             // FILTER stays, and it still reads the payload's `free` field
             // rather than the suffix — if Kenari ever marks a model free
             // without renaming it, filtering keeps working.
-            (model.tags || []).map((tag) => React.createElement(Tag, { key: tag, tone: 'neutral' }, tag)),
+            (model.tags || []).map((tag) => React.createElement(Tag, { key: tag, tone: 'neutral' }, tagLabel(tag))),
             // One boolean tag, never one badge per plan: the only question a
             // row answers is "does a subscription cover this PAID model", and
             // the tier that happens to cover it is not the reader's business.
-            planCovered(model) ? React.createElement(Tag, { tone: 'neutral' }, '套餐内') : null,
-            model.chatCapable === false ? React.createElement('span', { style: styles.dim }, '（非会话模型）') : null,
-            derived.known[model.id] === true ? React.createElement('span', { style: styles.dim }, '已在路由') : null,
+            planCovered(model) ? React.createElement(Tag, { tone: 'neutral' }, t('filter.plan')) : null,
+            model.chatCapable === false ? React.createElement('span', { style: styles.dim }, t('catalog.chatOnly')) : null,
+            derived.known[model.id] === true ? React.createElement('span', { style: styles.dim }, t('catalog.inRoute')) : null,
           ),
         )),
       )
@@ -713,8 +1311,8 @@ window.__ModuleLoader__.load({
      * costs no request and every opening starts from a fresh query and pick set.
      */
     function ModelCatalogModal(props) {
-      const { allowAdd, onClose, nativeButton, loadPanel, addModels, routeNs, routeProvider } = props
-      const panel = useCatalogPanel({ allowAdd, routeNs, routeProvider, loadPanel, addModels })
+      const { onClose, nativeButton, loadPanel, addModels, routeNs, routeProvider } = props
+      const panel = useCatalogPanel({ routeNs, routeProvider, loadPanel, addModels })
 
       /**
        * The way back out: close this dialog, then re-click the button dsh
@@ -735,37 +1333,37 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const footer = allowAdd
-        ? React.createElement(
-          React.Fragment,
-          null,
-          React.createElement('span', { style: styles.footerNote }, '写入立即生效'),
-          React.createElement(Button, { variant: 'outline', onClick: onClose }, '取消'),
-          React.createElement(
-            Button,
-            {
-              variant: 'primary',
-              disabled: panel.derived.addable.length === 0 || panel.write.status === 'saving',
-              onClick: panel.submit,
-            },
-            panel.write.status === 'saving' ? '正在加入…' : `添加所选（${String(panel.derived.addable.length)}）`,
-          ),
-        )
-        : React.createElement(Button, { variant: 'outline', onClick: onClose }, '关闭')
+      const footer = React.createElement(
+        React.Fragment,
+        null,
+        React.createElement('span', { style: styles.footerNote }, t('catalog.footerNote')),
+        React.createElement(Button, { variant: 'outline', onClick: onClose }, t('catalog.cancel')),
+        React.createElement(
+          Button,
+          {
+            variant: 'primary',
+            disabled: panel.derived.addable.length === 0 || panel.write.status === 'saving',
+            onClick: panel.submit,
+          },
+          panel.write.status === 'saving'
+            ? t('catalog.saving')
+            : t('catalog.submit', { count: panel.derived.addable.length }),
+        ),
+      )
 
       const plansError = viewPlansError(panel)
       const body = panel.state.status === 'loading'
-        ? React.createElement('p', { style: styles.notice }, '正在读取模型目录…')
+        ? React.createElement('p', { style: styles.notice }, t('catalog.loading'))
         : panel.state.status === 'error'
           ? React.createElement(
             React.Fragment,
             null,
-            React.createElement('p', { style: styles.error }, `模型目录读取失败：${panel.state.message}`),
-            allowAdd && nativeButton !== undefined
+            React.createElement('p', { style: styles.error }, t('catalog.error', { message: panel.state.message })),
+            nativeButton !== undefined
               ? React.createElement('p', { style: { margin: 0 } }, React.createElement(
                 Button,
                 { variant: 'outline', size: 'sm', onClick: fallbackToNative },
-                '改用 dsh 自带对话框',
+                t('catalog.fallback'),
               ))
               : null,
           )
@@ -773,11 +1371,11 @@ window.__ModuleLoader__.load({
             'div',
             { style: styles.body },
             React.createElement(CatalogToolbar, { panel }),
-            React.createElement(CatalogSummary, { derived: panel.derived, allowAdd }),
+            React.createElement(CatalogSummary, { derived: panel.derived }),
             plansError !== undefined ? React.createElement('p', { style: styles.error }, plansError) : null,
-            React.createElement(CatalogRows, { derived: panel.derived, allowAdd, picked: panel.picked, togglePick: panel.togglePick }),
+            React.createElement(CatalogRows, { derived: panel.derived, picked: panel.picked, togglePick: panel.togglePick }),
             panel.routeState !== undefined && panel.routeState.writable === false
-              ? React.createElement('p', { style: styles.notice }, '设置文档只读，不能写入。')
+              ? React.createElement('p', { style: styles.notice }, t('catalog.readonly'))
               : null,
             panel.write.status === 'added' ? React.createElement('p', { style: styles.notice }, panel.write.message) : null,
             panel.write.status === 'error' ? React.createElement('p', { style: styles.error }, panel.write.message) : null,
@@ -789,11 +1387,9 @@ window.__ModuleLoader__.load({
           open: true,
           onClose,
           className: DIALOG_CLASS,
-          title: allowAdd ? '选择要添加的模型' : '可选模型目录',
-          closeLabel: '关闭',
-          description: allowAdd
-            ? '按能力与套餐筛选，勾选后写入 kenari 路由。'
-            : '只读浏览 Kenari 模型目录。',
+          title: t('catalog.title'),
+          closeLabel: t('catalog.close'),
+          description: t('catalog.description'),
           footer,
         },
         body,
@@ -805,7 +1401,7 @@ window.__ModuleLoader__.load({
       const plansError = panel.view.plansError
       return plansError === undefined
         ? undefined
-        : `套餐表读取失败，「套餐内」标签与筛选本次不可用：${String(plansError)}`
+        : t('catalog.plansError', { message: plansError })
     }
 
     /**
@@ -831,7 +1427,6 @@ window.__ModuleLoader__.load({
         request === null
           ? null
           : React.createElement(ModelCatalogModal, {
-            allowAdd: true,
             nativeButton: request.button,
             onClose: () => {
               setRequest(null)
@@ -845,9 +1440,41 @@ window.__ModuleLoader__.load({
     }
 
     /** Adapter-discovered models for this route: names and capacities, no prices. */
+    /** How many models a collapsed list shows before it offers to open up. */
+    const MODEL_PREVIEW_COUNT = 3
+
+    /**
+     * A context window as a reader-facing size: 1048576 reads as "1M". Nobody
+     * compares exact token counts here; the magnitude is the fact being checked.
+     */
+    function formatContextWindow(tokens) {
+      if (typeof tokens !== 'number' || !Number.isFinite(tokens) || tokens <= 0) return undefined
+      if (tokens >= 1_000_000) return `${String(Math.round(tokens / 100_000) / 10)}M`
+      if (tokens >= 1_000) return `${String(Math.round(tokens / 1_000))}K`
+      return String(tokens)
+    }
+
+    /**
+     * Which rows a list shows. Pulled out of the component so the build gate can
+     * drive it directly: "three, then all when asked" is exactly the kind of rule
+     * that stays quietly wrong when the only way to reach it is a click.
+     */
+    function visibleModels(models, expanded) {
+      return expanded ? models : models.slice(0, MODEL_PREVIEW_COUNT)
+    }
+
+    /**
+     * The models the current route can use.
+     *
+     * The provider reports its whole catalog — dozens of rows — and a reader who
+     * came here to check one thing should not have to scroll past all of them. So
+     * a collapsed list shows the first few, says how many there are in total, and
+     * opens on request.
+     */
     function ModelList(props) {
       const { loadModels } = props
       const [state, setState] = React.useState({ status: 'loading' })
+      const [expanded, setExpanded] = React.useState(false)
       React.useEffect(() => {
         let live = true
         loadModels().then(
@@ -863,34 +1490,49 @@ window.__ModuleLoader__.load({
         }
       }, [loadModels])
 
-      if (state.status === 'loading') return React.createElement('p', { style: styles.notice }, '正在读取模型…')
+      if (state.status === 'loading') return React.createElement('p', { style: styles.notice }, t('models.loading'))
       if (state.status === 'error') {
-        return React.createElement('p', { style: styles.error }, `模型列表读取失败：${state.message}`)
+        return React.createElement('p', { style: styles.error }, t('models.error', { message: state.message }))
       }
       if (state.models.length === 0) {
-        return React.createElement('p', { style: styles.notice }, '该路由没有已注册的模型。检查 llm-pi-ai 预设是否随插件层生效（dsh --profile <p> --dump-config）。')
+        return React.createElement('p', { style: styles.notice }, t('models.empty'))
       }
       return React.createElement(
         React.Fragment,
         null,
-        React.createElement('p', { style: styles.notice }, `路由 ${state.route} 自述 ${state.models.length} 个模型：`),
+        React.createElement('p', { style: styles.notice }, t('models.summary', { route: state.route, count: state.models.length })),
         React.createElement(
           'table',
           { style: styles.table },
           React.createElement(
             'tbody',
             null,
-            state.models.map((model) =>
-              React.createElement(
+            visibleModels(state.models, expanded).map((model) => {
+              const context = formatContextWindow(model.contextWindow)
+              return React.createElement(
                 'tr',
                 { key: model.id },
                 React.createElement('td', { style: styles.cell }, React.createElement('code', { style: styles.mono }, model.id)),
                 React.createElement('td', { style: styles.cell }, model.name || ''),
-                React.createElement('td', { style: { ...styles.cell, whiteSpace: 'nowrap' } }, model.contextWindow ? `ctx ${model.contextWindow}` : ''),
-              ),
-            ),
+                React.createElement('td', { style: { ...styles.cell, whiteSpace: 'nowrap', opacity: 0.7 } }, context === undefined ? '' : t('models.context', { size: context })),
+              )
+            }),
           ),
         ),
+        state.models.length > MODEL_PREVIEW_COUNT
+          ? React.createElement(
+            Button,
+            {
+              variant: 'ghost',
+              size: 'sm',
+              'aria-expanded': expanded,
+              onClick: () => {
+                setExpanded(!expanded)
+              },
+            },
+            expanded ? t('ui.collapse') : t('models.expandAll', { count: state.models.length }),
+          )
+          : null,
       )
     }
 
@@ -917,176 +1559,168 @@ window.__ModuleLoader__.load({
         }
       }, [describeKey, keyRef])
 
-      if (state.status === 'loading') return React.createElement('span', { style: styles.notice }, '查询中…')
-      if (state.status === 'error') return React.createElement('span', { style: styles.error }, `状态查询失败：${state.message}`)
+      if (state.status === 'loading') return React.createElement('span', { style: styles.notice }, t('key.checking'))
+      if (state.status === 'error') return React.createElement('span', { style: styles.error }, t('key.checkFailed', { message: state.message }))
       const info = state.info
-      if (info === undefined) return React.createElement('span', { style: styles.error }, '凭据层没有该引用')
+      if (info === undefined) return React.createElement('span', { style: styles.error }, t('key.missingRef'))
       return React.createElement(
         'span',
         { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
-        React.createElement('span', { style: styles.badge }, info.configured ? '已配置' : '未配置'),
-        info.source ? React.createElement('span', { style: styles.badge }, `来源 ${info.source}`) : null,
-        React.createElement('span', { style: styles.badge }, info.writable ? '凭据层可写' : '凭据层只读'),
-        info.writable === false
-          ? React.createElement('span', { style: styles.notice }, '（进程环境提供的引用由环境遮蔽，凭据层拒绝写入）')
-          : null,
+        React.createElement('span', { style: styles.badge }, info.configured ? t('key.configured') : t('key.missing')),
+        info.source ? React.createElement('span', { style: styles.badge }, t('key.source', { source: info.source })) : null,
+        React.createElement('span', { style: styles.badge }, info.writable ? t('key.editable') : t('key.locked')),
       )
     }
 
-    /** The Kenari settings page. */
+    /**
+     * The Kenari settings page.
+     *
+     * Ordered by what a reader arrives for: is it connected (key status and the
+     * name it is stored under), see what it serves, decide about session titles
+     * — and then, behind folds, the two groups most readers never open. Nothing
+     * here names a config key, a schema field or an endpoint: the file-level
+     * facts live in the documentation.
+     */
     function KenariSection(props) {
-      const { scope, loadModels, describeKey, loadPanel } = props
+      const { scope, loadModels, describeKey } = props
       const snapshot = useScopeSnapshot(scope)
       const value = snapshot.value || {}
       // A field's PRESENCE in the raw user layer is what marks it overridden —
       // an override equal to the composition default is still an override.
       const user = snapshot.user || {}
       const writable = snapshot.writable === true
-      const [browsing, setBrowsing] = React.useState(false)
 
       const write = (field, next) => scope.set(field, next)
 
-      const statusLine = snapshot.status === 'ready'
-        ? `已连接设置文档（${snapshot.mode === 'host' ? 'Host 持久化' : '进程内'}）`
-        : snapshot.status === 'loading' ? '正在读取设置…' : '设置文档不可用：改动只能在 cordis 配置里做'
+      // Only speak up when there is something to say. "Settings are in sync" on
+      // a page that is always in sync is one more line to read and skip.
+      const statusNotice = snapshot.status === 'ready'
+        ? undefined
+        : snapshot.status === 'loading' ? t('connection.status.loading') : t('connection.status.unavailable')
 
-      const keyRef = value.apiKeyEnv || '（未设置）'
+      // The untouched default is the reference the Host would resolve anyway, so
+      // the key-status row reports on the key actually in effect.
+      const keyRef = value.apiKeyEnv || 'KENARI_API_KEY'
+
+      const liveField = (spec) => (spec.kind === 'readonly'
+        ? React.createElement(ReadOnlyRow, { key: spec.field, spec, value: value[spec.field] })
+        : React.createElement(LiveField, {
+          key: spec.field,
+          spec,
+          committed: value[spec.field],
+          overridden: Object.prototype.hasOwnProperty.call(user, spec.field),
+          writable,
+          onWrite: write,
+        }))
 
       return React.createElement(
         'div',
         { style: styles.root },
-        React.createElement('h3', { style: styles.title }, 'Kenari'),
-        React.createElement('p', { style: styles.lead }, '把 kenari.id 接成 dsh 的会话模型、web 搜索/抓取 provider 与 REST 工具族。'),
+        React.createElement('h3', { style: styles.title }, t('page.title')),
+        React.createElement('p', { style: styles.lead }, t('page.lead')),
 
+        // A status card, not a settings card: it answers "does Kenari work, and
+        // if not, where do I fix it" — the key itself is entered on the model
+        // route's own card, where dsh's password input lives.
         React.createElement(
           'div',
           { style: styles.block },
-          React.createElement('h4', { style: styles.blockTitle }, '凭据状态'),
+          React.createElement('h4', { style: styles.blockTitle }, t('connection.title')),
           React.createElement(
             'div',
             { style: styles.row },
-            React.createElement('div', { style: styles.label }, '凭据引用'),
-            React.createElement('code', { style: styles.mono }, keyRef),
-          ),
-          React.createElement(
-            'div',
-            { style: styles.row },
-            React.createElement('div', { style: styles.label }, '凭据层'),
+            React.createElement('div', { style: styles.label }, t('connection.keyStatus')),
             React.createElement(KeyStatus, { describeKey, keyRef }),
           ),
-          React.createElement(
-            'div',
-            { style: styles.row },
-            React.createElement('div', { style: styles.label }, '设置文档'),
-            React.createElement('div', null, writable ? React.createElement('span', { style: styles.badge }, '可写') : React.createElement('span', { style: styles.badge }, '只读')),
-          ),
-          React.createElement(
-            'p',
-            { style: styles.notice },
-            '这里只显示引用名与状态。key 的值由 dsh 凭据层持有，接口本身没有承载值的字段——任何界面都不会、也不能显示明文。',
-          ),
+          // The name the key is stored under sits with the key, not behind the
+          // 高级设置 fold: it answers the same question the status badges do.
+          liveField(KEY_REFERENCE_FIELD),
+          React.createElement('p', { style: styles.notice }, t('connection.notice')),
+          statusNotice === undefined ? null : React.createElement('p', { style: styles.notice }, statusNotice),
         ),
 
         React.createElement(
           'div',
           { style: styles.block },
-          React.createElement('h4', { style: styles.blockTitle }, '运行参数（提交后下一次操作生效）'),
-          React.createElement('p', { style: styles.notice }, statusLine),
+          React.createElement('h4', { style: styles.blockTitle }, t('models.title')),
+          React.createElement(ModelList, { loadModels }),
+          React.createElement('p', { style: styles.notice }, t('models.hint')),
+        ),
+
+        React.createElement(
+          'div',
+          { style: styles.block },
+          React.createElement('h4', { style: styles.blockTitle }, t('sessionTitle.title')),
           React.createElement(
             'div',
             { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-            LIVE_FIELDS.map((spec) =>
-              React.createElement(LiveField, {
-                key: spec.field,
-                spec,
-                committed: value[spec.field],
-                overridden: Object.prototype.hasOwnProperty.call(user, spec.field),
-                writable,
-                onWrite: write,
-              }),
-            ),
+            SESSION_TITLE_FIELDS.map(liveField),
           ),
         ),
 
         React.createElement(
-          'div',
-          { style: styles.block },
-          React.createElement('h4', { style: styles.blockTitle }, '加载期开关（改动需重启 dsh）'),
+          Disclosure,
+          { title: t('advanced.title'), hint: t('advanced.hint') },
           React.createElement(
             'div',
-            { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-            RESTART_FIELDS.map((spec) => React.createElement(RestartField, { key: spec.field, spec: spec, value: value[spec.field] })),
+            { style: { display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' } },
+            ADVANCED_FIELDS.map(liveField),
+          ),
+        ),
+
+        React.createElement(
+          Disclosure,
+          { title: t('restart.title'), hint: t('restart.hint') },
+          React.createElement(
+            'div',
+            { style: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' } },
+            RESTART_FIELDS.map((spec) => React.createElement(ReadOnlyRow, { key: spec.field, spec, value: value[spec.field] })),
           ),
         ),
 
         React.createElement(
           'div',
           { style: styles.block },
-          React.createElement('h4', { style: styles.blockTitle }, '模型路由'),
-          React.createElement(ModelList, { loadModels }),
-          React.createElement(
-            'p',
-            { style: styles.notice },
-            '列表来自 adapter 的自述目录。价格与完整目录（含 embedding / rerank / moderation）用 kenari_list_models 查。',
-          ),
-        ),
-
-        // The same dialog the Models page opens, minus the write: this page is
-        // for reading the catalog, and the route is edited where dsh edits it.
-        React.createElement(
-          'div',
-          { style: styles.block },
-          React.createElement('h4', { style: styles.blockTitle }, '可选模型目录'),
-          React.createElement(
-            'p',
-            { style: styles.notice },
-            '与模型页 Kenari 卡片「模型目录」下的「添加模型」「获取可用模型」是同一个对话框；数据由 Host 侧组装，没配 key 也能看。',
-          ),
-          React.createElement(
-            Button,
-            { variant: 'outline', size: 'sm', onClick: () => { setBrowsing(true) } },
-            '浏览可选模型（能力 / 套餐筛选）',
-          ),
-          browsing
-            ? React.createElement(ModelCatalogModal, {
-              allowAdd: false,
-              onClose: () => { setBrowsing(false) },
-              loadPanel,
-            })
-            : null,
-        ),
-
-        React.createElement(
-          'div',
-          { style: styles.block },
-          React.createElement('h4', { style: styles.blockTitle }, '这些数据在工具里，不在这个页面'),
+          React.createElement('h4', { style: styles.blockTitle }, t('usage.title')),
+          React.createElement('p', { style: styles.notice }, t('usage.hint')),
           React.createElement(
             'table',
             { style: styles.table },
             React.createElement(
+              'thead',
+              null,
+              React.createElement(
+                'tr',
+                null,
+                React.createElement('th', { style: { ...styles.cell, ...styles.th } }, t('usage.what')),
+                React.createElement('th', { style: { ...styles.cell, ...styles.th } }, t('usage.ask')),
+              ),
+            ),
+            React.createElement(
               'tbody',
               null,
-              TOOL_ONLY_FACTS.map(([what, how]) =>
+              TOOL_ONLY_FACTS.map((fact) =>
                 React.createElement(
                   'tr',
-                  { key: what },
-                  React.createElement('td', { style: styles.cell }, what),
-                  React.createElement('td', { style: styles.cell }, React.createElement('code', { style: styles.mono }, how)),
+                  { key: fact.what },
+                  React.createElement('td', { style: styles.cell }, t(fact.what)),
+                  // The right-hand cell is the thing to say out loud, so it is
+                  // the example question rather than a tool name: a tool name is
+                  // not something a reader can call — the agent is.
+                  React.createElement('td', { style: styles.cell }, t(fact.ask)),
                 ),
               ),
             ),
-          ),
-          React.createElement(
-            'p',
-            { style: styles.notice },
-            '余额、计费与实时价格由 Host 侧端点提供，而 dsh 没有对应的 Remote 命名空间；本插件不新增 Host API 包（那需要改 dsh），所以这里不显示会过期的数字。',
           ),
         ),
       )
     }
 
-    /** Services this bundle needs: the slot ledger, the Remotes, and our settings scope. */
-    const inject = ['slots', 'remote', 'remote.llm', 'remote.credentials', 'remote.settings', 'settingsScope']
+    /**
+     * Services this bundle needs: the slot ledger, the Remotes, our settings
+     * scope, and the locale service that answers this bundle's own copy.
+     */
+    const inject = ['slots', 'locale', 'remote', 'remote.llm', 'remote.credentials', 'remote.settings', 'settingsScope']
 
     /**
      * Register the Kenari settings page once the shell has declared
@@ -1094,6 +1728,10 @@ window.__ModuleLoader__.load({
      */
     function apply(ctx) {
       const scope = ctx.settingsScope.bind({ namespace: NS })
+
+      // Bind the translator before anything can render: the components below
+      // call it, and every one of them is reachable from here on.
+      t = ctx.locale.bind(NS)
 
       /**
        * Model discovery is per owning settings namespace, and a route pi-ai does
@@ -1119,9 +1757,9 @@ window.__ModuleLoader__.load({
           if (result.ok && result.value.length > 0) {
             return { route: candidate.request.provider, models: result.value }
           }
-          failures.push(`${candidate.request.provider}: ${result.ok ? '目录为空' : result.error.code}`)
+          failures.push(`${candidate.request.provider}: ${result.ok ? t('models.routeEmpty') : result.error.code}`)
         }
-        throw new Error(`没有可用的 Kenari 模型路由（${failures.join('；')}）`)
+        throw new Error(t('models.noRoute', { failures: failures.join('; ') }))
       }
 
       /** `describe()` is the only key reader: it answers state, never the value. */
@@ -1182,8 +1820,8 @@ window.__ModuleLoader__.load({
       const addModels = async (route, profiles) => {
         const read = await readPiAi()
         if (read.failure !== undefined) return { ok: false, message: read.failure }
-        if (read.view === undefined) return { ok: false, message: `设置文档里没有 ${PI_AI_NS} 命名空间` }
-        if (read.writable !== true) return { ok: false, message: '设置文档只读，改动只能在 cordis 配置里做' }
+        if (read.view === undefined) return { ok: false, message: t('catalog.noNamespace', { ns: PI_AI_NS }) }
+        if (read.writable !== true) return { ok: false, message: t('catalog.settingsReadOnly') }
         const existing = routeModelsOf(read.view, route.provider)
         const byId = new Map()
         for (const model of existing) {
@@ -1199,10 +1837,15 @@ window.__ModuleLoader__.load({
         return { ok: true }
       }
 
-      const injected = () => ({ scope, loadModels, describeKey, loadPanel })
+      const injected = () => ({ scope, loadModels, describeKey })
       ctx.slots.inject('settings.section', () =>
         ctx.slots.register(
-          { name: 'settings.section', id: NS, order: 30, label: () => 'Kenari', inject: injected },
+          // `locale: NS` is what mints the props `t` seat and makes a missing
+          // locale face fail loudly instead of silently painting raw keys. This
+          // bundle reads its copy through the module-bound translator instead,
+          // which reads the active locale at call time — the outlet's own
+          // locale-revision subscription is what re-renders the switch.
+          { name: 'settings.section', id: NS, order: 30, label: () => t('nav'), locale: NS, inject: injected },
           KenariSection,
         ),
       )
@@ -1217,17 +1860,26 @@ window.__ModuleLoader__.load({
           {
             name: 'settings.models.provider-card',
             key: PI_AI_NS,
+            locale: NS,
             inject: () => ({ loadPanel, addModels }),
           },
           ModelPickerHost,
         ),
       )
 
+      // The dictionary for this bundle's own copy. Registered as an effect so a
+      // reload cannot leave a stale table behind, exactly like dsh's own plugins.
+      ctx.effect(() => ctx.locale.register(NS, LOCALES), 'kenari: 界面文案字典')
+
       // One document-level listener, torn down with this fiber. It is inert
       // until the Kenari card mounts, because a click only means anything when
       // this plugin's dialog can answer it.
       ctx.effect(() => installEntryTakeover(), 'kenari: 模型目录入口接管')
       ensureDialogWidth()
+
+      // The settings nav glyph. dsh picks its own by section id, so this is the
+      // only way a plugin can carry its own mark into that rail.
+      ctx.effect(() => installSettingsNavIcon(), 'kenari: 设置导航图标')
     }
 
     exports.NS = NS
@@ -1250,6 +1902,29 @@ window.__ModuleLoader__.load({
       markedCard,
       cardWithMarker,
       ModelCatalogModal,
+      // Localization and the folded groups: a key with no translation, or a
+      // "collapsed" block that opens by default, is invisible until a user
+      // notices. The gate asserts both.
+      LOCALES,
+      LOCALE_NS: NS,
+      LOCALE_SPECS,
+      ADVANCED_FIELDS,
+      KEY_REFERENCE_FIELD,
+      TOOL_ONLY_FACTS,
+      MODEL_PREVIEW_COUNT,
+      visibleModels,
+      formatContextWindow,
+      tagLabel,
+      Disclosure,
+      ReadOnlyRow,
+      NAV_ICON_ATTR,
+      NAV_ICON_STYLE_ATTR,
+      NAV_ICON_URL,
+      NAV_ROW_SELECTOR,
+      SETTINGS_SECTION_LABEL,
+      navIconRule,
+      settingsNavButton,
+      markNavRow,
     }
     return module.exports
   },

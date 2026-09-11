@@ -23,6 +23,7 @@ import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { KenariCatalog } from './catalog.js'
 import { KenariPlans } from './plans.js'
 import { registerCatalogView } from './catalog-view.js'
+import { registerFaviconRoute } from './favicon.js'
 import { applyPlanDefaultRoute } from './default-route.js'
 import { BalanceMonitor, BillingLedger } from './billing.js'
 import { installKenariSettings, KENARI_SETTINGS_NAMESPACE } from './settings.js'
@@ -31,6 +32,7 @@ import { ModelCandidates } from './llm/candidates.js'
 import { installModelRecovery } from './llm/recovery.js'
 import type { Target } from './llm/recovery.js'
 import { kenariRetryPolicy } from './llm/retry.js'
+import { installSessionTitlePrefix } from './session-title.js'
 import { registerDocsTools } from './tools/docs.js'
 import { registerAccountTools } from './tools/account.js'
 import { registerXSearchTool } from './tools/x-search.js'
@@ -94,6 +96,12 @@ export interface Config {
   modelSwitchSkipCodes?: string[]
   /** 换模型时是否往会话注入一条切换通知。 */
   modelSwitchNoticeEnabled?: boolean
+  /** 会话标题前缀开关：开启后新标题写入前缀（默认开启）。已有会话不回溯。 */
+  sessionTitlePrefixEnabled?: boolean
+  /** 会话标题前缀模板：token `yyyy/MM/dd/HH/mm/ss`（本机时区），其余字符原样。 */
+  sessionTitlePrefix?: string
+  /** 会话标题（前缀 + 正文）的 UTF-8 字节上限；需与 patch 里 session-title 的 maxTitleBytes 一致。 */
+  sessionTitleMaxBytes?: number
 }
 
 export const Config: z<Config> = z.object({
@@ -127,6 +135,9 @@ export const Config: z<Config> = z.object({
     'AUTH', 'INVALID_CREDENTIAL', 'MISSING_CREDENTIAL', 'QUOTA',
   ]),
   modelSwitchNoticeEnabled: z.boolean().default(true),
+  sessionTitlePrefixEnabled: z.boolean().default(true),
+  sessionTitlePrefix: z.string().default('yyyyMMddHHmmss-'),
+  sessionTitleMaxBytes: z.number().step(1).min(1).default(96),
 })
 
 /** Cordis plugin name used by loader diagnostics. */
@@ -279,6 +290,10 @@ export function apply(ctx: Context, config: Config): void {
   // 所以设置页看到的标签与 kenari_list_models 说的是同一件事。
   registerCatalogView(ctx, { http: deps, catalog, plans })
 
+  // 设置导航栏的 Kenari 图标（`/api/kenari.favicon`）。图标由浏览器半边贴进
+  // dsh 画的导航行，这里只负责把 `assets/` 里的 PNG 递出去。
+  registerFaviconRoute(ctx)
+
   // 默认路由：按当前 key 的套餐把「免缓存额度」模型填进 `kenari` 路由。
   // 预设是静态 YAML，算不出套餐相关的东西，所以要在设置节挂上之后补一次
   // （用户层已经自己写过 models 时一律不动，详见 src/default-route.ts）。
@@ -349,5 +364,14 @@ export function apply(ctx: Context, config: Config): void {
       ...(logger === undefined ? {} : { logger }),
     })
     logger?.info('kenari: model failure recovery installed (retry → model switch → default provider)')
+  })
+
+  // 会话标题前缀：在服务端 `session/title` 事件上剥旧前缀、按会话创建时间重算。
+  // 不注册 provider、不改 dsh 行；也不需要额外注入 —— 未打 scope 标签的插件 ctx
+  // 收得到所有会话事件（dsh-scope 的 carrier 对 untagged listener 放行）。
+  installSessionTitlePrefix(ctx, {
+    enabled: () => liveConfig.sessionTitlePrefixEnabled ?? true,
+    template: () => liveConfig.sessionTitlePrefix ?? 'yyyyMMddHHmmss-',
+    maxBytes: () => liveConfig.sessionTitleMaxBytes ?? 96,
   })
 }

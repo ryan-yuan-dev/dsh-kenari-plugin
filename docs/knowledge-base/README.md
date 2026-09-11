@@ -2,12 +2,12 @@
 
 本目录只存放**经过验证、长期准确**的技术事实：接口签名、配置语义、字段定义、协议约束。
 
-**不写入**：过程记录、推理结论、项目决策、待办事项。这三类分别属于 `docs/plans/`、`docs/handoff/`（命名 `NNN-yyyy-MM-dd-HHmmss-title.md`）与 `AGENTS.md`。
+**不写入**：过程记录、推理结论、项目决策、待办事项。这三类分别属于 `docs/plans/`、`docs/handoff/`。
 
 ## 目录结构
 
 | 子目录 | 内容 |
-|---|---|
+| --- | --- |
 | [dsh/](dsh/) | **dsh 自身**的机制事实：插件模型、web 缝、其他缝、vendor 源码实读 |
 | [kenari-plugin/](kenari-plugin/) | **Kenari 侧**的事实：端点、鉴权、schema、计费 |
 | [plugin-rules.md](plugin-rules.md)（顶层） | 跨两者的开发规则：15 条硬约束，违反会导致明确失败模式 |
@@ -15,7 +15,7 @@
 ## dsh/ — dsh 自身
 
 | 文档 | 内容 |
-|---|---|
+| --- | --- |
 | [plugin-rules.md](plugin-rules.md) | 开发规则与约束（13 条，必须遵守） |
 | [dsh/dsh-plugin-model.md](dsh/dsh-plugin-model.md) | dsh 插件模型：模块形态、配置、打包、层序、安装 |
 | [dsh/dsh-web-seam.md](dsh/dsh-web-seam.md) | web 能力缝：provider 接口、选择语义、dsh-base 默认配置 |
@@ -51,7 +51,7 @@ Kenari 的 MCP 配置与传输类型在 `https://kenari.id/en/docs/tools`。
 本库核实于 2026-09-10，依据版本 **`0.1.5-rc.1`**（实装于 `~/.dsh`，全局安装于 `/opt/homebrew/lib/node_modules/@deepseek-ai/dsh`）：
 
 | 包 | 版本 |
-|---|---|
+| --- | --- |
 | `@deepseek-ai/dsh` | `0.1.5-rc.1` |
 | `@deepseek-ai/dsh-base` | `0.1.5-rc.1` |
 | `@deepseek-ai/dsh-web` | `0.1.5-rc.1` |

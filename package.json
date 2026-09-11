@@ -18,6 +18,7 @@
   "files": [
     "lib",
     "client",
+    "assets",
     "cordis.patch.yml",
     "README.md"
   ],
@@ -26,7 +27,9 @@
     "check:client": "node scripts/check-client.mjs",
     "test": "node test/real-harness.mjs",
     "test:default-route": "node test/default-route.mjs",
-    "test:view": "node test/catalog-view.mjs"
+    "test:view": "node test/catalog-view.mjs",
+    "test:favicon": "node test/favicon.mjs",
+    "test:session-title": "node test/session-title.mjs"
   },
   "dsh": {
     "bundle": {

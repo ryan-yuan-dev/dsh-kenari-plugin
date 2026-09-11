@@ -41,8 +41,29 @@ const declaredExternals = new Set(pkg.dsh?.client?.external ?? [])
 const requested = []
 
 let registration
-// What the bundle appends to `document.head` (the picker's width rule).
+// What the bundle appends to `document.head` (the picker's width rule and the
+// nav-icon rule), and everything it creates (those two styles plus the probe).
 const appendedNodes = []
+const createdNodes = []
+// The nav-icon installer observes the body for the settings panel and probes the
+// favicon route with an <img>. Both are stubbed so `apply` runs for real, and the
+// gate can still drive the deferred half — a panel that mounts after the probe
+// resolves, which is the only path the browser takes.
+const observers = []
+class MutationObserverStub {
+  constructor(callback) {
+    this.callback = callback
+    this.target = undefined
+    this.disconnected = false
+    observers.push(this)
+  }
+  observe(target) {
+    this.target = target
+  }
+  disconnect() {
+    this.disconnected = true
+  }
+}
 const sandbox = {
   window: {
     __ModuleLoader__: {
@@ -51,13 +72,26 @@ const sandbox = {
       },
     },
   },
-  // The takeover installs one capture-phase listener on the document, and the
-  // width rule is appended to head, so `apply` needs both in scope; nothing here
-  // dispatches a real click or paints anything.
+  // The takeover installs one capture-phase listener on the document, the two
+  // rules are appended to head, and the nav-icon installer observes the body;
+  // `apply` needs all three in scope. Nothing here dispatches a real click,
+  // loads a real image, or paints anything.
   document: {
-    body: null,
+    body: { nodeType: 1 },
     querySelector: () => null,
-    createElement: () => ({ textContent: '', setAttribute() {} }),
+    querySelectorAll: () => [],
+    createElement: (tag) => {
+      const node = {
+        tag,
+        textContent: '',
+        attributes: {},
+        setAttribute(name, value) {
+          node.attributes[name] = value
+        },
+      }
+      createdNodes.push(node)
+      return node
+    },
     head: {
       appendChild(node) {
         appendedNodes.push(node)
@@ -66,6 +100,7 @@ const sandbox = {
     addEventListener() {},
     removeEventListener() {},
   },
+  MutationObserver: MutationObserverStub,
   setTimeout: (fn) => {
     fn()
     return 0
@@ -145,6 +180,7 @@ function stubPrimitives() {
     Button: passthrough('button'),
     Pill: passthrough('pill'),
     Tag: passthrough('tag'),
+    Switch: passthrough('switch'),
   }
 }
 
@@ -166,6 +202,23 @@ function contains(node, predicate) {
     if (predicate(element)) found = true
   })
   return found
+}
+
+/**
+ * The element tree with every function component invoked once.
+ *
+ * `walk` only sees host elements: a component element's own copy has no strings
+ * in it, so "does the page actually render this row" cannot be asked of the raw
+ * tree. Invoking the components flattens them, which is what lets the gate
+ * assert where a row lives rather than only that its spec exists. The stub's
+ * hooks are inert (`useEffect` never runs its callback), so a component that
+ * fetches on mount renders its loading branch — no request leaves the process.
+ */
+function expand(node) {
+  if (node === null || node === undefined || typeof node !== 'object') return node
+  if (Array.isArray(node)) return node.map(expand)
+  if (typeof node.type === 'function') return expand(node.type(node.props))
+  return { ...node, props: { ...node.props, children: expand(node.props?.children) } }
 }
 
 check('factory runs against a stub module table', true)
@@ -390,6 +443,8 @@ check(
 // ---------------------------------------------------------------------------
 try {
   const registered = []
+  const registeredLocales = []
+  let activeLocale = 'zh'
   const snapshot = {
     status: 'ready',
     value: {
@@ -410,6 +465,26 @@ try {
   }
   const ctx = {
     effect: (callback) => callback(),
+    // The bundle binds its translator from here and registers its dictionaries
+    // here. `bind` returns a lookup into whichever dictionary the gate selects,
+    // so the components under test render real copy rather than raw keys.
+    locale: {
+      bind: (ns) => {
+        if (ns !== exports.__internals.LOCALE_NS) throw new Error(`bound the wrong locale namespace: ${ns}`)
+        return (key, params) => {
+          const dict = exports.__internals.LOCALES[activeLocale]
+          let text = Object.prototype.hasOwnProperty.call(dict, key) ? dict[key] : key
+          for (const [name, value] of Object.entries(params ?? {})) {
+            text = text.replace(`{${name}}`, String(value))
+          }
+          return text
+        }
+      },
+      register: (ns, dicts) => {
+        registeredLocales.push({ ns, dicts })
+        return () => {}
+      },
+    },
     settingsScope: {
       bind: () => ({ getSnapshot: () => snapshot, subscribe: () => () => {}, set: async () => {}, mutate: async () => {}, unset: async () => {} }),
     },
@@ -447,13 +522,13 @@ try {
   // The dialog body itself, rendered directly because the anchor only mounts it
   // on a click the gate cannot dispatch. This is the one pass that would catch a
   // bad tag/pill prop in the picker's own tree.
-  const modal = internals.ModelCatalogModal({ allowAdd: true, onClose: () => {}, nativeButton: undefined, ...cardFace })
+  const modal = internals.ModelCatalogModal({ onClose: () => {}, nativeButton: undefined, ...cardFace })
   const footer = modal?.props?.footer
   check(
     'the picker dialog renders its chrome, body, and footer',
-    modal?.props?.title === '选择要添加的模型'
-    && modal?.props?.closeLabel === '关闭'
-    && modal?.props?.children?.props?.children === '正在读取模型目录…'
+    modal?.props?.title === internals.LOCALES.zh['catalog.title']
+    && modal?.props?.closeLabel === internals.LOCALES.zh['catalog.close']
+    && modal?.props?.children?.props?.children === internals.LOCALES.zh['catalog.loading']
     && Array.isArray(footer?.props?.children) && footer.props.children.length === 3,
   )
   // dsh's card is sized for bare ids; this dialog's rows carry an id plus tags,
@@ -461,9 +536,271 @@ try {
   check(
     'the picker dialog asks for the wider card',
     modal?.props?.className === 'kenari-catalog-dialog'
-    && appendedNodes.length === 1
-    && /\.kenari-catalog-dialog\[role="dialog"\]\{width:min\(820px,92vw\)/.test(appendedNodes[0].textContent),
+    && appendedNodes.length === 2
+    && appendedNodes.some((node) => /\.kenari-catalog-dialog\[role="dialog"\]\{width:min\(820px,92vw\)/.test(node.textContent)),
     appendedNodes.map((node) => node.textContent).join(' | '),
+  )
+
+  // ---- the settings nav icon ----------------------------------------------
+  // `apply` installed the rule, probed the route, and started observing; the
+  // browser only ever runs the rest after the image loads and settings opens,
+  // so the gate drives those two steps by hand.
+  const navRule = internals.navIconRule()
+  const probe = createdNodes.find((node) => node.tag === 'img')
+  check(
+    'apply injects the nav-icon rule and probes the favicon route',
+    appendedNodes.some((node) => node.textContent === navRule) && probe?.src === internals.NAV_ICON_URL,
+    `${appendedNodes.length} style node(s); probe=${probe?.src}`,
+  )
+  check(
+    'the nav-icon rule hides dsh\'s own glyph and draws this plugin\'s icon at its size',
+    navRule.includes(`[${internals.NAV_ICON_ATTR}] svg{display:none}`)
+    && navRule.includes(`url("${internals.NAV_ICON_URL}")`)
+    && navRule.includes('content:""')
+    && navRule.includes('width:16px')
+    && navRule.includes('flex:none'),
+    navRule,
+  )
+  check(
+    'the nav icon watches the body for the settings panel',
+    observers.length === 1 && observers[0].target === sandbox.document.body,
+    `${observers.length} observer(s)`,
+  )
+  check(
+    'the nav row lookup is scoped to the settings rail',
+    internals.NAV_ROW_SELECTOR === '[role="dialog"] nav button',
+    internals.NAV_ROW_SELECTOR,
+  )
+  // The style element carries its own marker: sharing the row attribute would
+  // make `[data-kenari-nav-icon]` ambiguous between a row and a stylesheet.
+  check(
+    'the injected style and the claimed row do not share a marker attribute',
+    internals.NAV_ICON_STYLE_ATTR !== internals.NAV_ICON_ATTR
+    && internals.NAV_ICON_STYLE_ATTR !== '' && internals.NAV_ICON_ATTR !== '',
+    `${internals.NAV_ICON_ATTR} / ${internals.NAV_ICON_STYLE_ATTR}`,
+  )
+  check(
+    'the injected style carries the style marker, not the row marker',
+    createdNodes.some((node) => node.tag === 'style' && node.attributes?.[internals.NAV_ICON_STYLE_ATTR] === ''),
+    `${createdNodes.filter((node) => node.tag === 'style').length} style node(s)`,
+  )
+
+  const fakeRow = (label) => {
+    const attributes = {}
+    return {
+      textContent: label,
+      attributes,
+      setAttribute(name, value) {
+        attributes[name] = value
+      },
+    }
+  }
+  const generalRow = fakeRow('General')
+  const navKenariRow = fakeRow('Kenari')
+  const nearMissRow = fakeRow('Kenari-direct')
+  check(
+    'the exact label picks the Kenari row, not a longer label starting with it',
+    internals.settingsNavButton(
+      { querySelectorAll: () => [generalRow, navKenariRow, nearMissRow] }, 'Kenari',
+    ) === navKenariRow,
+  )
+  check(
+    'marking a row sets the one attribute the rule keys on',
+    internals.markNavRow({ querySelectorAll: () => [navKenariRow] }, 'Kenari') === navKenariRow
+    && navKenariRow.attributes[internals.NAV_ICON_ATTR] === '',
+  )
+  check(
+    'a rail with no matching row marks nothing',
+    internals.markNavRow({ querySelectorAll: () => [] }, 'Kenari') === null,
+  )
+
+  // The deferred half, in the order the browser runs it: the panel mounts while
+  // the probe is still pending (nothing may change — that is the fail-open half,
+  // a 404 has to leave dsh's gear rather than an empty slot), and the row is
+  // marked only once `onload` has proved the route answers.
+  const liveRow = fakeRow('Kenari')
+  const originalQueryAll = sandbox.document.querySelectorAll
+  sandbox.document.querySelectorAll = (selector) => (selector === internals.NAV_ROW_SELECTOR ? [liveRow] : [])
+  try {
+    observers[0].callback([
+      { addedNodes: [{ nodeType: 1, matches: () => false, querySelector: () => ({}) }] },
+    ])
+    check(
+      'a panel mounting before the probe resolves changes nothing',
+      liveRow.attributes[internals.NAV_ICON_ATTR] === undefined,
+      JSON.stringify(liveRow.attributes),
+    )
+    probe.onload()
+    check(
+      'the row is marked once the image has loaded',
+      liveRow.attributes[internals.NAV_ICON_ATTR] === '',
+      JSON.stringify(liveRow.attributes),
+    )
+  } finally {
+    sandbox.document.querySelectorAll = originalQueryAll
+  }
+
+  // ---- localization --------------------------------------------------------
+  check(
+    'the bundle registers its own dictionaries, under its own namespace',
+    registeredLocales.length === 1
+    && registeredLocales[0].ns === internals.LOCALE_NS
+    && registeredLocales[0].dicts === internals.LOCALES,
+    `${registeredLocales.length} registration(s)`,
+  )
+  const zhKeys = Object.keys(internals.LOCALES.zh).sort()
+  const enKeys = Object.keys(internals.LOCALES.en).sort()
+  const missingInEn = zhKeys.filter((key) => !enKeys.includes(key))
+  const extraInEn = enKeys.filter((key) => !zhKeys.includes(key))
+  check(
+    'the English dictionary covers every Chinese key, with none extra',
+    missingInEn.length === 0 && extraInEn.length === 0,
+    `zh=${String(zhKeys.length)} en=${String(enKeys.length)}; missing=[${missingInEn.join(', ')}] extra=[${extraInEn.join(', ')}]`,
+  )
+  // A key that resolves to itself renders as the literal `field.timeoutMs` in
+  // front of a user — which is exactly how a renamed key fails: silently.
+  const specKeys = []
+  for (const spec of internals.LOCALE_SPECS) {
+    specKeys.push(spec.labelKey)
+    if (spec.hintKey !== undefined) specKeys.push(spec.hintKey)
+  }
+  // The usage block's own heading and column heads are rendered inline rather
+  // than through a spec, so they are listed here.
+  specKeys.push('usage.title', 'usage.hint', 'usage.what', 'usage.ask')
+  for (const fact of internals.TOOL_ONLY_FACTS) specKeys.push(fact.what, fact.ask)
+  const unresolved = specKeys.filter((key) =>
+    !Object.prototype.hasOwnProperty.call(internals.LOCALES.zh, key)
+    || !Object.prototype.hasOwnProperty.call(internals.LOCALES.en, key))
+  check(
+    'every field label, hint and tool row resolves in both locales',
+    unresolved.length === 0,
+    unresolved.length === 0 ? `${String(specKeys.length)} keys` : unresolved.join(', '),
+  )
+  // The nav label is a thunk for a reason: the shell re-reads it per locale.
+  check(
+    'the nav label follows the active locale instead of being frozen at registration',
+    section.options.label() === internals.LOCALES.zh.nav,
+    String(section.options.label()),
+  )
+  check(
+    'no registration asks for copy from a namespace other than its own',
+    registered.every((entry) => entry.options.locale === undefined || entry.options.locale === internals.LOCALE_NS),
+    registered.map((entry) => `${entry.options.name}=${String(entry.options.locale)}`).join(', '),
+  )
+  {
+    // The switch under test: with the English table active the page must render
+    // English. This is the assertion that catches a string left inline, because
+    // an inlined literal is the one text a locale switch never reaches.
+    activeLocale = 'en'
+    const englishSection = section.component({ close: () => {}, ...section.options.inject() })
+    const texts = []
+    walk(englishSection, (element) => {
+      if (typeof element.props?.children === 'string') texts.push(element.props.children)
+    })
+    activeLocale = 'zh'
+    check(
+      'switching the active locale switches the rendered copy',
+      texts.includes(internals.LOCALES.en['connection.title'])
+      && !texts.includes(internals.LOCALES.zh['connection.title']),
+      texts.slice(0, 4).join(' | '),
+    )
+  }
+
+  // ---- the folded groups and the collapsed model list ---------------------
+  const collapsed = internals.Disclosure({ title: 't', children: 'BODY' })
+  const opened = internals.Disclosure({ title: 't', defaultOpen: true, children: 'BODY' })
+  const bodyOf = (element) => (Array.isArray(element.props.children) ? element.props.children : [element.props.children])
+  check(
+    'a fold is closed unless it is asked to open',
+    bodyOf(collapsed).includes('BODY') === false && bodyOf(opened).includes('BODY') === true,
+    JSON.stringify(bodyOf(collapsed)),
+  )
+  check(
+    'the fold head is a real button that reports its state',
+    collapsed?.props?.children?.[0]?.type === 'button'
+    && collapsed.props.children[0].props['aria-expanded'] === false
+    && opened.props.children[0].props['aria-expanded'] === true,
+  )
+  check(
+    'the collapsed model list shows three rows, and the open one shows them all',
+    internals.MODEL_PREVIEW_COUNT === 3
+    && internals.visibleModels(['a', 'b', 'c', 'd'], false).join(',') === 'a,b,c'
+    && internals.visibleModels(['a', 'b', 'c', 'd'], true).join(',') === 'a,b,c,d',
+  )
+  check(
+    'a context window reads as a magnitude rather than as a token count',
+    internals.formatContextWindow(1048576) === '1M'
+    && internals.formatContextWindow(1050000) === '1.1M'
+    && internals.formatContextWindow(872000) === '872K'
+    && internals.formatContextWindow(32000) === '32K'
+    && internals.formatContextWindow(undefined) === undefined
+    && internals.formatContextWindow(0) === undefined,
+    `${String(internals.formatContextWindow(1048576))} / ${String(internals.formatContextWindow(872000))}`,
+  )
+  check(
+    'a capability id with no translation of its own prints as itself',
+    internals.tagLabel('image') === internals.LOCALES.zh['tag.image']
+    && internals.tagLabel('quantum') === 'quantum',
+  )
+
+  // ---- read-only rows, and where the key reference sits --------------------
+  // The read-only rows used to stack the label and the value as two plain lines
+  // of the same 13px text, which made "网页搜索" and "已开启" read as two labels.
+  // The value now wears a pill; this asserts the two are styled apart, because
+  // "they look the same" is exactly the regression a prop check can catch.
+  const readOnly = internals.ReadOnlyRow({
+    spec: { field: 'searchEnabled', labelKey: 'restart.search' },
+    value: true,
+  })
+  const readOnlyLabel = readOnly.props.children[0]
+  const readOnlyValue = readOnly.props.children[1].props.children
+  check(
+    'a read-only label and its value do not share one style',
+    readOnlyLabel.props.style.borderRadius === undefined
+    && readOnlyValue.props.style.borderRadius === '999px'
+    && readOnlyValue.props.children === internals.LOCALES.zh['field.on'],
+    `${String(readOnlyLabel.props.style.borderRadius)} / ${String(readOnlyValue.props.style.borderRadius)}`,
+  )
+  check(
+    'a boolean read-only value says on/off rather than true/false',
+    internals.ReadOnlyRow({ spec: { field: 'f', labelKey: 'restart.search' }, value: false })
+      .props.children[1].props.children.props.children === internals.LOCALES.zh['field.off'],
+  )
+  // The key reference is a fact about the key, so it belongs in the 密钥 group
+  // rather than behind 高级设置 — and it stays read-only there.
+  check(
+    'the key reference is a read-only row of the key group, not a folded parameter',
+    internals.ADVANCED_FIELDS.every((spec) => spec.field !== 'apiKeyEnv')
+    && internals.KEY_REFERENCE_FIELD.field === 'apiKeyEnv'
+    && internals.KEY_REFERENCE_FIELD.kind === 'readonly'
+    && internals.LOCALE_SPECS.indexOf(internals.KEY_REFERENCE_FIELD) !== -1,
+  )
+  // Where the row sits is the point of the move, and document order is the only
+  // way to see it from a rendered tree: the reference name must land between the
+  // key-status row and the next group's heading.
+  const orderedTexts = []
+  walk(expand(tree), (el) => {
+    if (typeof el.props?.children === 'string') orderedTexts.push(el.props.children)
+  })
+  const at = (text) => orderedTexts.indexOf(text)
+  check(
+    'the key group renders the reference name it reports on',
+    at(internals.LOCALES.zh['field.apiKeyEnv']) > at(internals.LOCALES.zh['connection.keyStatus'])
+    && at(internals.LOCALES.zh['field.apiKeyEnv']) < at(internals.LOCALES.zh['models.title']),
+    `at=${String(at(internals.LOCALES.zh['field.apiKeyEnv']))} status=${String(at(internals.LOCALES.zh['connection.keyStatus']))} models=${String(at(internals.LOCALES.zh['models.title']))}`,
+  )
+  // The usage table used to answer "which tool name", which is legible and not
+  // actionable. The right column is now the question to ask.
+  check(
+    'the usage table shows the question to ask instead of a tool name',
+    contains(tree, (el) => el.props?.children === internals.LOCALES.zh['usage.balance.ask'])
+    && contains(tree, (el) => el.props?.children === internals.LOCALES.zh['usage.ask'])
+    && contains(tree, (el) => el.props?.children === 'kenari_balance / kenari_usage') === false
+    && contains(tree, (el) => el.props?.children === 'kenari_list_models') === false,
+  )
+  check(
+    'the settings page no longer carries its own read-only catalog entry point',
+    section.options.inject().loadPanel === undefined,
   )
 } catch (err) {
   check('slots render without throwing', false, String(err && err.stack ? err.stack.split('\n')[0] : err))

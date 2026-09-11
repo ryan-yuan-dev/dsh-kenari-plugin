@@ -11,7 +11,7 @@
 dsh 的扩展机制是 Cordis 插件行与 patch 层，不是修改包本身。
 
 | 操作 | 是否属于受支持的扩展方式 |
-|---|---|
+| --- | --- |
 | `insert` 新增插件行 | 是 |
 | 按 id 覆盖已有行的 config | 是 |
 | `ctx.web.registerSearchProvider` / `registerFetchProvider` | 是 |
