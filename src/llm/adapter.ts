@@ -27,6 +27,7 @@ import type {
   LlmProviderInfo,
   LlmResolvedModelInfo,
   Message,
+  ResolvedRetryPolicy,
   StreamChunk,
   TokenUsage,
   ToolSchema,
@@ -44,6 +45,8 @@ export interface KenariAdapterDeps {
   readonly http: KenariHttpDeps
   readonly catalog: KenariCatalog
   readonly billing: BillingLedger
+  /** Kenari 路由的重试策略；省略则用 dsh 默认（指数退避 5 次）。 */
+  readonly retryPolicy?: ResolvedRetryPolicy
   readonly logger?: { warn(msg: string): void; info(msg: string): void }
 }
 
@@ -224,6 +227,15 @@ export class KenariLlmAdapter extends LlmAdapter {
 
   override providerInfo(provider: string): LlmProviderInfo {
     return { id: provider, name: 'Kenari（原生适配器）' }
+  }
+
+  /**
+   * 把插件配置拼出的重试策略交给 dsh 的重试机制。基类默认返回 undefined，
+   * 也就是走 dsh 默认策略（指数退避 500ms→10s、5 次）。
+   * 注意 dsh 只在 `registerAdapter()` 时读取一次并冻结，所以改配置要重启才生效。
+   */
+  override providerRetryPolicy(_provider: string): ResolvedRetryPolicy | undefined {
+    return this.deps.retryPolicy
   }
 
   /** 目录即模型列表：价格与上下文随目录刷新，不再静态写死在配置里。 */

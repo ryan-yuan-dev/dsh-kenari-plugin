@@ -289,6 +289,18 @@ check('a manual model selection clears the override',
   afterManual.provider === 'kenari' && afterManual.model === 'current',
   `${afterManual.provider}/${afterManual.model}`)
 
+// ------------------------------------------------------- adapter retry policy
+const { KenariLlmAdapter } = await import('../lib/llm/adapter.js')
+
+// 适配器构造只保存依赖，providerRetryPolicy 不碰它们，所以空壳足够
+const shellDeps = { http: {}, catalog: {}, billing: {} }
+const wired = new KenariLlmAdapter({ ...shellDeps, retryPolicy: kenariRetryPolicy({ maxRetries: 5, delayMs: 5000 }) })
+check('the native adapter exposes the configured retry policy',
+  wired.providerRetryPolicy('kenari-direct')?.maxRetries === 5,
+  String(wired.providerRetryPolicy('kenari-direct')?.maxRetries))
+check('the native adapter stays policy-free when not configured',
+  new KenariLlmAdapter(shellDeps).providerRetryPolicy('kenari-direct') === undefined)
+
 const failed = results.filter((row) => !row.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 if (failed.length > 0) console.log('FAILED:', failed.map((row) => row.name).join(' | '))
