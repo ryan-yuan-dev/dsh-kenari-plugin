@@ -49,6 +49,11 @@ export function validateKenariConfig(value: Config): void {
   if ((value.balanceCacheTtlMs ?? 0) > (value.catalogCacheTtlMs ?? 0) * 10) {
     throw new Error('balanceCacheTtlMs 不应比 catalogCacheTtlMs 大一个数量级：余额会长期陈旧')
   }
+  // dsh 的 resolveRetryPolicy 会拒绝空的可重试码列表；在这里先拦，
+  // 免得用户写完设置页要等到下次加载插件才炸
+  if ((value.modelRetryableCodes ?? []).length === 0) {
+    throw new Error('modelRetryableCodes 不能为空：空列表会让重试策略无效')
+  }
 }
 
 /**

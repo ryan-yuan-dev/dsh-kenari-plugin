@@ -39,12 +39,18 @@ importers:
         specifier: ^3.18.1-rc.1
         version: 3.18.2
     devDependencies:
+      '@deepseek-ai/dsh-agent':
+        specifier: 0.1.5-rc.1
+        version: 0.1.5-rc.1(011efc65c149ca53f6af28580be53483)
       '@deepseek-ai/dsh-attachment':
         specifier: 0.1.5-rc.1
         version: 0.1.5-rc.1(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-brand@0.1.5-rc.1(@deepseek-ai/cordis@4.0.2))
       '@deepseek-ai/dsh-client-connection':
         specifier: 0.1.5-rc.1
         version: 0.1.5-rc.1(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.5-rc.1(@deepseek-ai/cordis@4.0.2))
+      '@deepseek-ai/dsh-session':
+        specifier: 0.1.5-rc.1
+        version: 0.1.5-rc.1(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-scope@0.1.5-rc.1(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.5-rc.1(@deepseek-ai/cordis@4.0.2)))
       '@deepseek-ai/dsh-util-values':
         specifier: 0.1.5-rc.1
         version: 0.1.5-rc.1(@deepseek-ai/cordis@4.0.2)

@@ -70,6 +70,24 @@ export interface Config {
   nativeAdapterEnabled?: boolean
   /** Provider route id for the plugin's own LlmAdapter. */
   nativeProviderId?: string
+  /** 模型调用失败时自动恢复（重试 → 换模型 → 回退默认 provider）。 */
+  modelRecoveryEnabled?: boolean
+  /** 参与恢复的 provider 路由；范围外的路由行为完全不变。 */
+  modelRecoveryProviders?: string[]
+  /** 首次请求之后的额外重试次数（kenari-direct 路由；llm-pi-ai 路由见 cordis.patch.yml）。 */
+  modelRetryMaxRetries?: number
+  /** 每次重试前的固定等待毫秒数（同上传导范围）。 */
+  modelRetryDelayMs?: number
+  /** 允许重试的失败码；不能为空。 */
+  modelRetryableCodes?: string[]
+  /** 是否允许换模型（关掉则只重试）。 */
+  modelSwitchEnabled?: boolean
+  /** 换模型/回退默认 provider 前的等待毫秒数。 */
+  modelSwitchDelayMs?: number
+  /** 跳过「同 provider 换模型」直接回退 provider 的失败码。 */
+  modelSwitchSkipCodes?: string[]
+  /** 换模型时是否往会话注入一条切换通知。 */
+  modelSwitchNoticeEnabled?: boolean
 }
 
 export const Config: z<Config> = z.object({
@@ -90,6 +108,19 @@ export const Config: z<Config> = z.object({
   budgetCapRp: z.number().step(1).min(0).default(0),
   nativeAdapterEnabled: z.boolean().default(false),
   nativeProviderId: z.string().default('kenari-direct'),
+  modelRecoveryEnabled: z.boolean().default(true),
+  modelRecoveryProviders: z.array(z.string()).default(['kenari', 'kenari-direct']),
+  modelRetryMaxRetries: z.number().step(1).min(0).default(5),
+  modelRetryDelayMs: z.number().step(1).min(0).default(5_000),
+  modelRetryableCodes: z.array(z.string()).default([
+    'EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT',
+  ]),
+  modelSwitchEnabled: z.boolean().default(true),
+  modelSwitchDelayMs: z.number().step(1).min(0).default(5_000),
+  modelSwitchSkipCodes: z.array(z.string()).default([
+    'AUTH', 'INVALID_CREDENTIAL', 'MISSING_CREDENTIAL', 'QUOTA',
+  ]),
+  modelSwitchNoticeEnabled: z.boolean().default(true),
 })
 
 /** Cordis plugin name used by loader diagnostics. */
