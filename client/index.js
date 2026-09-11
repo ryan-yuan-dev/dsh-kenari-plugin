@@ -89,6 +89,13 @@ window.__ModuleLoader__.load({
       ['输入 token 与窗口占比', 'kenari_count_tokens'],
     ]
 
+    /**
+     * One chip frame shared by the selected and unselected states: toggling a
+     * filter fills it in, it never redraws the outline in a different color, so
+     * a row of chips reads as one control strip whatever is active.
+     */
+    const CHIP_BORDER = '1px solid rgba(127,127,127,0.4)'
+
     const styles = {
       root: { display: 'flex', flexDirection: 'column', gap: '18px', fontSize: '13px', lineHeight: 1.6 },
       title: { margin: 0, fontSize: '15px', fontWeight: 600 },
@@ -107,19 +114,22 @@ window.__ModuleLoader__.load({
       notice: { margin: 0, opacity: 0.7, fontSize: '12px' },
       error: { margin: 0, color: '#c0392b', fontSize: '12px' },
       toolbar: { display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' },
-      chip: { padding: '2px 9px', borderRadius: '999px', border: '1px solid rgba(127,127,127,0.4)', background: 'transparent', color: 'inherit', font: 'inherit', fontSize: '12px', cursor: 'pointer' },
-      chipOn: { padding: '2px 9px', borderRadius: '999px', border: '1px solid currentColor', background: 'rgba(127,127,127,0.18)', color: 'inherit', font: 'inherit', fontSize: '12px', cursor: 'pointer', fontWeight: 600 },
+      chip: { padding: '2px 9px', borderRadius: '999px', border: CHIP_BORDER, background: 'transparent', color: 'inherit', font: 'inherit', fontSize: '12px', cursor: 'pointer' },
+      chipOn: { padding: '2px 9px', borderRadius: '999px', border: CHIP_BORDER, background: 'rgba(127,127,127,0.28)', color: 'inherit', font: 'inherit', fontSize: '12px', cursor: 'pointer', fontWeight: 600 },
       search: { flex: '1 1 160px', minWidth: '120px', boxSizing: 'border-box', padding: '3px 8px', border: '1px solid rgba(127,127,127,0.4)', borderRadius: '6px', background: 'transparent', color: 'inherit', font: 'inherit' },
-      // Every tag renders through this one style — capabilities, 免费 and 套餐内
+      // Every tag renders through this one style — capability tags and 套餐内
       // alike — so a row reads as a set of equal facts rather than one badge
       // shouting louder than the rest. They never shrink: a squeezed badge is
       // unreadable, and the row wraps instead, keeping every tag at full width.
       capTag: { display: 'inline-block', flexShrink: 0, whiteSpace: 'nowrap', padding: '0 6px', borderRadius: '4px', border: '1px solid rgba(127,127,127,0.35)', fontSize: '11px', opacity: 0.85 },
       list: { maxHeight: '320px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '2px', border: '1px solid rgba(127,127,127,0.18)', borderRadius: '6px', padding: '6px 8px' },
-      // The id heads the line and never shrinks; the tags follow it and wrap
-      // as a group when the row runs out of width.
-      item: { display: 'flex', flexWrap: 'wrap', gap: '2px 8px', alignItems: 'center', padding: '3px 0' },
+      // The row is one non-wrapping band: checkbox, id, then the tag column.
+      // `alignItems: center` therefore centers the id against the tag block,
+      // and the tags wrap inside their own column instead of restarting at the
+      // row's left edge.
+      item: { display: 'flex', flexWrap: 'nowrap', gap: '8px', alignItems: 'center', padding: '3px 0' },
       itemId: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'nowrap', flexShrink: 0 },
+      tagColumn: { display: 'flex', flexWrap: 'wrap', gap: '2px 6px', alignItems: 'center', flex: '1 1 auto', minWidth: 0 },
       dim: { opacity: 0.45, fontSize: '12px', whiteSpace: 'nowrap', flexShrink: 0 },
       primary: { alignSelf: 'flex-start', padding: '4px 12px', borderRadius: '6px', border: '1px solid rgba(127,127,127,0.5)', background: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer' },
     }
@@ -397,7 +407,7 @@ window.__ModuleLoader__.load({
           { style: styles.notice },
           `显示 ${visible.length} / ${models.length} 个模型`
           + (allowAdd ? `，已选 ${addable.length} 个待加入` : '')
-          + `。能力标签按目录事实推导；「套餐内」= 付费模型被某个订阅套餐覆盖（请求从套餐额度扣费）；免费模型不标注，没有这个标签的付费模型只能用余额（PAYG）。`,
+          + `。能力标签按目录事实推导；免费模型看 id 的 \`:free\` 后缀；「套餐内」= 付费模型被某个订阅套餐覆盖（请求从套餐额度扣费），没有这个标签的付费模型只能用余额（PAYG）。`,
         ),
         view.plansError !== undefined
           ? React.createElement('p', { style: styles.error }, `套餐表读取失败，「套餐内」标签与筛选本次不可用：${view.plansError}`)
@@ -423,14 +433,27 @@ window.__ModuleLoader__.load({
               // name still travels in the payload (search matches it, and it
               // is what gets written into the route's model entry).
               React.createElement('code', { style: styles.itemId }, model.id),
-              model.free === true ? React.createElement('span', { style: styles.capTag }, '免费') : null,
-              (model.tags || []).map((tag) => React.createElement('span', { key: tag, style: styles.capTag }, tag)),
-              // One boolean tag, never one badge per plan: the only question a
-              // row answers is "does a subscription cover this PAID model", and
-              // the tier that happens to cover it is not the reader's business.
-              planCovered(model) ? React.createElement('span', { style: styles.capTag }, '套餐内') : null,
-              model.chatCapable === false ? React.createElement('span', { style: styles.dim }, '（非会话模型）') : null,
-              known[model.id] === true ? React.createElement('span', { style: styles.dim }, '已在路由') : null,
+              // The tags are their OWN wrapping column, not siblings of the id
+              // in one wrapping row: as siblings, a wrapped line restarts at the
+              // row's left edge (measured: `pdf` at x=0, under the checkbox),
+              // which reads as a stray line rather than as the row's tags. In a
+              // column they wrap in place, and the id centers against the block.
+              React.createElement(
+                'span',
+                { style: styles.tagColumn },
+                // No 免费 tag: a free model says so in its own id (`...:free`),
+                // so the badge only repeated what the row already showed. The
+                // 免费 FILTER stays, and it still reads the payload's `free`
+                // field rather than the suffix — if Kenari ever marks a model
+                // free without renaming it, filtering keeps working.
+                (model.tags || []).map((tag) => React.createElement('span', { key: tag, style: styles.capTag }, tag)),
+                // One boolean tag, never one badge per plan: the only question a
+                // row answers is "does a subscription cover this PAID model", and
+                // the tier that happens to cover it is not the reader's business.
+                planCovered(model) ? React.createElement('span', { style: styles.capTag }, '套餐内') : null,
+                model.chatCapable === false ? React.createElement('span', { style: styles.dim }, '（非会话模型）') : null,
+                known[model.id] === true ? React.createElement('span', { style: styles.dim }, '已在路由') : null,
+              ),
             )),
           ),
         allowAdd
