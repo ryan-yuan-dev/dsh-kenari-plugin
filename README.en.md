@@ -331,14 +331,14 @@ Design and measurement notes live under `docs/` (`plans/` for designs and implem
 
 ## How this was built
 
-The plugin was written in **ZCode**, with session models from opencode's DeepSeek V4.1 Flash and Kenari's `deepseek-v4-flash`. The reason is practical: building it meant reading dsh's source repeatedly and editing across files, both models hold a long context, and Kenari bills per use, which makes trial and error cheaper than a monthly subscription.
+The plugin was written in **ZCode**, with session models from opencode's DeepSeek V4.1 Flash and Kenari's `deepseek-v4-flash`. Building it meant reading dsh's source repeatedly and editing across files. Both models hold a long context, and Kenari bills per use, so trial and error costs less than a monthly commitment.
 
-If you want the same setup, these two are **referral links**:
+If you want a similar setup, these are the two I actually use:
 
-- [Kenari](https://kenari.id/code/KNR-KKRNAJ): all 21 tools in this plugin point at it, and the cashback and credit you get on signup follow whatever the site is running at the time. Signing up through this link earns me a small referral reward, which is one way this plugin gets maintained.
-- [opencode Go](https://opencode.ai/go?ref=343F5JW4RA): $10 a month with quota per 5 hour window, used here as the dsh session model.
+- **[Kenari](https://kenari.id/code/KNR-KKRNAJ)**. One key reaches models from several vendors. The catalog lists 80, from DeepSeek, GLM and GPT through speech, image, video, OCR, embeddings and rerank. It speaks OpenAI-compatible, Anthropic-compatible and Responses, so an existing client needs only a new base URL. Billing is per use in Rupiah with a low top-up minimum (QRIS from Rp 1,000). The catalog and docs endpoints are public, so you can see what you get before paying.
+- **[opencode Go](https://opencode.ai/go?ref=343F5JW4RA)**. $10 a month with quota per 5 hour window instead of per-token billing, and you can top up credit when the quota runs short. It works with any agent, which is why it runs the dsh session model here. Coding sessions make many small requests, so a flat monthly price is easier to predict.
 
-Using the links or not makes no difference to the plugin. Every capability works the same for every account.
+Both are referral links. Signing up through them earns me a small referral reward.
 
 ## License
 
