@@ -80,6 +80,27 @@ window.__ModuleLoader__.load({
      */
     const FETCH_LABELS = ['获取可用模型', 'Fetch available models']
 
+    /**
+     * The picker's own width.
+     *
+     * `Modal`'s card is `width: min(380px, 100%)` — sized for dsh's own list of
+     * bare ids — while a row here carries an id plus up to five tags, and the
+     * toolbar seven filter chips. `Modal` accepts only a class (its `className`
+     * merges into the base card class and no style prop is forwarded), so the
+     * width rides an injected rule; the `[role="dialog"]` qualifier is what beats
+     * the base rule's specificity without `!important`.
+     */
+    const DIALOG_CLASS = 'kenari-catalog-dialog'
+
+    /** Inject the picker's width rule once, at activation, so the first paint already has it. */
+    function ensureDialogWidth() {
+      if (document.querySelector(`style[data-${DIALOG_CLASS}]`) !== null) return
+      const style = document.createElement('style')
+      style.setAttribute(`data-${DIALOG_CLASS}`, '')
+      style.textContent = `.${DIALOG_CLASS}[role="dialog"]{width:min(820px,92vw);max-width:92vw}`
+      document.head.appendChild(style)
+    }
+
     /** Scalar fields the Host reads live, so an edit applies at the next operation. */
     const LIVE_FIELDS = [
       { field: 'baseURL', label: 'API base URL', kind: 'string', hint: '[OI]/Responses 线为 https://kenari.id/v1；Anthropic 线为 https://kenari.id（不带 /v1）。形状错误会返回 405。' },
@@ -465,8 +486,7 @@ window.__ModuleLoader__.load({
             setWrite(result.ok === true
               ? {
                 status: 'added',
-                message: `已加入 ${String(profiles.length)} 个模型到 kenari 路由（立即生效，不需要再点「保存」）。`
-                  + '卡片里那份模型列表是编辑器的草稿，要收起再展开「编辑」才会刷新。',
+                message: `已加入 ${String(profiles.length)} 个模型（立即生效）。编辑器里的列表要重新展开「编辑」才刷新。`,
               }
               : { status: 'error', message: result.message })
             if (result.ok === true) {
@@ -526,15 +546,15 @@ window.__ModuleLoader__.load({
       )
     }
 
-    /** What the current filter is showing, and what the tags mean. */
+    /** What the current filter is showing, and what the one non-obvious tag means. */
     function CatalogSummary(props) {
       const { derived, allowAdd } = props
       return React.createElement(
         'p',
         { style: styles.notice },
         `显示 ${String(derived.visible.length)} / ${String(derived.models.length)} 个模型`
-        + (allowAdd ? `，已选 ${String(derived.addable.length)} 个待加入` : '')
-        + '。能力标签按目录事实推导；免费模型看 id 的 `:free` 后缀；「套餐内」= 付费模型被某个订阅套餐覆盖（请求从套餐额度扣费），没有这个标签的付费模型只能用余额（PAYG）。',
+        + (allowAdd ? `，待加入 ${String(derived.addable.length)} 个` : '')
+        + '。「套餐内」= 付费模型由订阅套餐覆盖，否则走余额。',
       )
     }
 
@@ -681,11 +701,12 @@ window.__ModuleLoader__.load({
         {
           open: true,
           onClose,
+          className: DIALOG_CLASS,
           title: allowAdd ? '选择要添加的模型' : '可选模型目录',
           closeLabel: '关闭',
           description: allowAdd
-            ? 'Kenari 目录的可用模型，按能力与套餐筛选后勾选，点「添加所选」写入 kenari 路由。'
-            : '只读浏览。目录、能力标签与套餐归属都由 Host 侧组装（公开目录 + 套餐表），没配 key 也能看。',
+            ? '按能力与套餐筛选，勾选后写入 kenari 路由。'
+            : '只读浏览 Kenari 模型目录。',
           footer,
         },
         body,
@@ -932,7 +953,7 @@ window.__ModuleLoader__.load({
           React.createElement(
             'p',
             { style: styles.notice },
-            '与「设置 → 模型 → Kenari → 编辑 → 获取可用模型」打开的是同一个对话框：目录、能力标签与套餐归属都由 Host 侧组装，没配 key 也能看。',
+            '与模型页的「获取可用模型」是同一个对话框；数据由 Host 侧组装，没配 key 也能看。',
           ),
           React.createElement(
             Button,
@@ -1119,6 +1140,7 @@ window.__ModuleLoader__.load({
       // until the Kenari card mounts, because a click only means anything when
       // this plugin's dialog can answer it.
       ctx.effect(() => installFetchTakeover(), 'kenari: 获取可用模型 入口接管')
+      ensureDialogWidth()
     }
 
     exports.NS = NS

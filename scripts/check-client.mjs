@@ -41,6 +41,8 @@ const declaredExternals = new Set(pkg.dsh?.client?.external ?? [])
 const requested = []
 
 let registration
+// What the bundle appends to `document.head` (the picker's width rule).
+const appendedNodes = []
 const sandbox = {
   window: {
     __ModuleLoader__: {
@@ -49,10 +51,18 @@ const sandbox = {
       },
     },
   },
-  // The takeover installs one capture-phase listener on the document, so `apply`
-  // needs a document in scope; nothing here dispatches a real click.
+  // The takeover installs one capture-phase listener on the document, and the
+  // width rule is appended to head, so `apply` needs both in scope; nothing here
+  // dispatches a real click or paints anything.
   document: {
     body: null,
+    querySelector: () => null,
+    createElement: () => ({ textContent: '', setAttribute() {} }),
+    head: {
+      appendChild(node) {
+        appendedNodes.push(node)
+      },
+    },
     addEventListener() {},
     removeEventListener() {},
   },
@@ -347,6 +357,15 @@ try {
     && modal?.props?.closeLabel === '关闭'
     && modal?.props?.children?.props?.children === '正在读取模型目录…'
     && Array.isArray(footer?.props?.children) && footer.props.children.length === 3,
+  )
+  // dsh's card is sized for bare ids; this dialog's rows carry an id plus tags,
+  // so it must carry the class that the injected rule widens.
+  check(
+    'the picker dialog asks for the wider card',
+    modal?.props?.className === 'kenari-catalog-dialog'
+    && appendedNodes.length === 1
+    && /\.kenari-catalog-dialog\[role="dialog"\]\{width:min\(820px,92vw\)/.test(appendedNodes[0].textContent),
+    appendedNodes.map((node) => node.textContent).join(' | '),
   )
 } catch (err) {
   check('slots render without throwing', false, String(err && err.stack ? err.stack.split('\n')[0] : err))
