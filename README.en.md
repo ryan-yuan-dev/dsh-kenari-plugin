@@ -22,20 +22,13 @@ dsh plugin --profile web add @deepseek-ai/dsh-web-fetch-http@0.1.5-rc.1
 
 ## Install
 
-`lib/` is not committed, so clone and build first. `dsh plugin add github:...` cannot work on its own:
-
 ```sh
-git clone https://github.com/ryan-yuan-dev/dsh-kenari-plugin.git
-cd dsh-kenari-plugin
-pnpm install
-pnpm build
-
-dsh plugin --profile web add "$PWD"
+dsh plugin --profile web add dsh-kenari-plugin
 dsh --profile web --dump-config | grep -A3 dsh-kenari-plugin   # confirm the patch layer applied
 dsh --profile web
 ```
 
-The profile links to this directory, so after installing you only rerun `pnpm build` for source changes.
+To work on the plugin source, install from a clone instead: `pnpm install && pnpm build`, then `dsh plugin --profile web add "$PWD"`. The profile links to that directory, so after installing you only rerun `pnpm build` for source changes.
 
 ## Set up your key
 

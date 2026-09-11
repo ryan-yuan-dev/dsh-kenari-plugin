@@ -1,6 +1,6 @@
 {
   "name": "dsh-kenari-plugin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Kenari (kenari.id) as a first-class citizen of DeepSeek Harness: session models, web search/fetch provider with fallback, and REST capability tools.",
   "license": "MIT",
   "repository": {
@@ -33,6 +33,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/check-client.mjs",
+    "prepublishOnly": "pnpm build",
     "check:client": "node scripts/check-client.mjs",
     "test": "node test/real-harness.mjs",
     "test:default-route": "node test/default-route.mjs",

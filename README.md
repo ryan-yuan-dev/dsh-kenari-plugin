@@ -22,20 +22,13 @@ dsh plugin --profile web add @deepseek-ai/dsh-web-fetch-http@0.1.5-rc.1
 
 ## 安装
 
-`lib/` 不进版本库，所以要先 clone 再编译，不能直接 `dsh plugin add github:...`：
-
 ```sh
-git clone https://github.com/ryan-yuan-dev/dsh-kenari-plugin.git
-cd dsh-kenari-plugin
-pnpm install
-pnpm build
-
-dsh plugin --profile web add "$PWD"
+dsh plugin --profile web add dsh-kenari-plugin
 dsh --profile web --dump-config | grep -A3 dsh-kenari-plugin   # 确认 patch 层生效
 dsh --profile web
 ```
 
-装好后 profile 里是 pnpm link，改源码只需重新 `pnpm build`。
+改插件源码时换成 clone 安装：`pnpm install && pnpm build`，再 `dsh plugin --profile web add "$PWD"`。profile 里是 pnpm link，之后改源码只需重新 `pnpm build`。
 
 ## 配置密钥
 
