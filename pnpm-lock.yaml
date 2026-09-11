@@ -42,6 +42,9 @@ importers:
       '@deepseek-ai/dsh-attachment':
         specifier: 0.1.5-rc.1
         version: 0.1.5-rc.1(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-brand@0.1.5-rc.1(@deepseek-ai/cordis@4.0.2))
+      '@deepseek-ai/dsh-client-connection':
+        specifier: 0.1.5-rc.1
+        version: 0.1.5-rc.1(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.5-rc.1(@deepseek-ai/cordis@4.0.2))
       '@deepseek-ai/dsh-util-values':
         specifier: 0.1.5-rc.1
         version: 0.1.5-rc.1(@deepseek-ai/cordis@4.0.2)
@@ -90,6 +93,11 @@ packages:
 
   '@deepseek-ai/dsh-brand@0.1.5-rc.1':
     resolution: {integrity: sha512-nfEsuSNghhrcvjMnjlPU55Z60K/5FjCRY4ZJtnc0SHR0PgoMl7N9I9+y4t2kDMe3rnEKlH2UgIGIZ/msGOYvpg==}
+    peerDependencies:
+      '@deepseek-ai/cordis': ^4.0.2
+
+  '@deepseek-ai/dsh-client-connection@0.1.5-rc.1':
+    resolution: {integrity: sha512-mBHCF/WT5kAn4fHJDe0mL5TcVUEIRWGUAwPzr32xitQrIAM6jh5G+pPVJLDtTk+ZbHGkGusN0+nQh2gCJpGHjQ==}
     peerDependencies:
       '@deepseek-ai/cordis': ^4.0.2
 
@@ -286,6 +294,15 @@ snapshots:
   '@deepseek-ai/dsh-brand@0.1.5-rc.1(@deepseek-ai/cordis@4.0.2)':
     dependencies:
       '@deepseek-ai/cordis': 4.0.2
+
+  '@deepseek-ai/dsh-client-connection@0.1.5-rc.1(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.5-rc.1(@deepseek-ai/cordis@4.0.2))':
+    dependencies:
+      '@deepseek-ai/cordis': 4.0.2
+      '@deepseek-ai/dsh-credentials': 0.1.5-rc.1(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.5-rc.1(@deepseek-ai/cordis@4.0.2))
+      '@deepseek-ai/schemastery': 3.18.2
+      zod: 4.5.4
+    transitivePeerDependencies:
+      - '@deepseek-ai/dsh-invariants'
 
   '@deepseek-ai/dsh-code-runtime@0.1.5-rc.1(@deepseek-ai/cordis@4.0.2)':
     dependencies:

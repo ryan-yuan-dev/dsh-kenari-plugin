@@ -46,6 +46,12 @@ export interface KenariRequestOptions {
    * 生成类调用置 false：请求可能已在服务端完成并计费，重试有重复扣费风险。
    */
   retryTimeouts?: boolean
+  /**
+   * 是否带 `Authorization: Bearer <key>` 并因此要求 key（默认 true）。
+   * 站点公开端点（套餐表等，不在 /v1 下、不需要 key）置 false：
+   * 没有 key 的部署也应该能读到它们。
+   */
+  auth?: boolean
 }
 
 /** 瞬时失败（429/408/5xx/网络错误）可重试；其余状态一次即返。 */
@@ -97,6 +103,25 @@ export async function kenariGet<T>(
 ): Promise<T> {
   const qs = query === undefined ? '' : `?${new URLSearchParams(query).toString()}`
   return kenariRequest(deps, 'GET', `${path}${qs}`, signal, opts, async (init, endpoint) => {
+    const response = await fetch(endpoint, init)
+    return finishJson<T>(deps, response, endpoint)
+  })
+}
+
+/**
+ * GET 一个 Kenari **站点**端点（绝对 URL、无 key、不补 /v1）。
+ *
+ * 与 REST 线分开的理由：这类端点（`/api/plans` 之类）是站点自己的公开路由，
+ * 既不在 `/v1` 下也不认 `Authorization`。它们的形状比 API 线宽松（官网改版即可能变），
+ * 所以调用方必须把解析失败当成可选数据缺失，而不是插件故障。
+ */
+export async function kenariPublicGet<T>(
+  deps: KenariHttpDeps,
+  url: string,
+  signal?: AbortSignal,
+  opts?: KenariRequestOptions,
+): Promise<T> {
+  return kenariRequest(deps, 'GET', url, signal, { ...opts, auth: false }, async (init, endpoint) => {
     const response = await fetch(endpoint, init)
     return finishJson<T>(deps, response, endpoint)
   })
@@ -223,8 +248,8 @@ async function kenariRequest<T>(
   run: (init: RequestInit & { headers: Record<string, string> }, endpoint: string) => Promise<T>,
 ): Promise<T> {
   const { config } = deps
-  // MCP 走绝对 URL；REST 端点按 [OI] 线形状补 /v1
-  const endpoint = pathOrUrl.startsWith('https://')
+  // MCP 与站点端点走绝对 URL；REST 端点按 [OI] 线形状补 /v1
+  const endpoint = /^https?:\/\//i.test(pathOrUrl)
     ? pathOrUrl
     : restEndpoint(config.baseURL, pathOrUrl)
 
@@ -232,8 +257,10 @@ async function kenariRequest<T>(
     throw kenariWebError('WEB_KENARI_NOT_CONFIGURED', `kenari: baseURL 无法解析：${config.baseURL ?? ''}`)
   }
 
-  const apiKey = await deps.resolveApiKey()
-  if (apiKey === undefined || apiKey.length === 0) {
+  // 公开站点端点不要 key：没有 key 的部署也要能读到套餐表这类数据
+  const needsKey = opts?.auth ?? true
+  const apiKey = needsKey ? await deps.resolveApiKey() : undefined
+  if (needsKey && (apiKey === undefined || apiKey.length === 0)) {
     throw kenariWebError('WEB_KENARI_NO_KEY', `kenari: 凭据 ${config.apiKeyEnv ?? 'KENARI_API_KEY'} 未配置`)
   }
 
@@ -248,7 +275,7 @@ async function kenariRequest<T>(
     const composed = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
     const init = {
       method,
-      headers: { Authorization: `Bearer ${apiKey}` },
+      headers: apiKey === undefined ? {} : { Authorization: `Bearer ${apiKey}` },
       signal: composed,
     } as RequestInit & { headers: Record<string, string> }
     try {
@@ -290,6 +317,17 @@ function restEndpoint(baseURL: string | undefined, path: string): string {
   const base = baseURL ?? 'https://kenari.id'
   const baseTrimmed = base.replace(/\/+$/, '')
   return baseTrimmed.endsWith('/v1') ? `${baseTrimmed}${path}` : `${baseTrimmed}/v1${path}`
+}
+
+/**
+ * 站点端点拼装：baseURL 去掉 `/v1` 后再接路径。
+ * 用户把 baseURL 配成 `https://kenari.id/v1`（[OI] 线的标准形状），
+ * 而站点路由在裸域下，所以这里必须反向归一。
+ */
+export function siteEndpoint(baseURL: string | undefined, path: string): string {
+  const base = (baseURL ?? 'https://kenari.id').replace(/\/+$/, '')
+  const bare = base.endsWith('/v1') ? base.slice(0, -3) : base
+  return `${bare}${path}`
 }
 
 /** 2xx → 解析 JSON；否则按错误信封抛 WEB_KENARI_HTTP。 */

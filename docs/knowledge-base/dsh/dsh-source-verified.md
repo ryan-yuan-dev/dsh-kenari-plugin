@@ -421,3 +421,62 @@ slot 的 `SlotErrorBoundary` 捕获异常后渲染 `<div data-slot-error="<slotK
 - 页面出现 `data-slot-error` ≈ 你的组件在渲染期抛了
 - 只想看错误必须在**首次挂载前**挂 `console.error` 钩子（`componentDidCatch` 里 `console.error` 一次）
 - 没有打包器的包，值得在 build 里用 stub React **真实跑一次组件渲染**当编译期检查
+
+## 15. 第 7 期实读：Models 页扩展座、同源 Fetch 路由、以及"加不了 Remote 命名空间"（2026-09-11）
+
+### 模型设置页的扩展座（唯一能往那一页加 UI 的口子）
+
+`ui-settings-models` 声明了两个子槽位（`slot-contract.ts`），专为"仓库外的插件往模型设置页加 UI"：
+
+```ts
+'settings.models.provider-card': { kind: 'keyed'; scope: 'root'; owner: ProviderCardExtrasOwnerProps }
+'settings.models.footer':       { kind: 'list';  scope: 'root'; owner: ModelsFooterOwnerProps }
+```
+
+- keyed 槽的**注册键 = provider 行的 settingsNs**（`ProviderDirectoryEntry.settingsNs`，如 `llm-pi-ai`），
+  注册写 `ctx.slots.register({ name, key: 'llm-pi-ai', inject }, Component)`；组件拿到
+  `{ provider, configured, keyConfigured }`（`provider.provider` 是路由 id）
+- 派发点：`ModelsSection.tsx` 的三处 `renderSlot(...{entryKey: row.entry.settingsNs})`——**每个属于该
+  settingsNs 的行都会派发**（含手写路由），所以组件必须自己按 `provider.provider` 收窄
+- 挂载位置是**行卡片内部**（在 `编辑` 展开的编辑器之前），不是弹窗里
+
+### 「获取可用模型」对话框**不可扩展**
+
+`ModelListEditor`（`ui-settings-models`）里的候选列表只渲染 `candidate.id`，而 `LlmDiscoveredModel`
+只有 `{ id, name?, contextWindow?, maxTokens? }`（`packages/llm/llm/src/types.ts:289`）。
+能力/价格/套餐这类字段**既传不进去也显示不出来**，且没有任何 slot 落在弹窗内。
+要在这类弹窗里加东西 = 改 dsh，红线禁止。
+
+### 客户端**加不了** Remote 命名空间
+
+- 客户端能用的命名空间来自 `dsh-api-remotes`（`packages/api/remotes/src/client/index.ts`）里**写死的**
+  contribution 清单，每个来自某包的 `/remote` 生成产物；插件的 client 半边不在其中
+- `ctx.remote.$mount(contribution)` 虽是运行时公开方法，但客户端 `validateContribution` 要求
+  descriptor 是 **strict codec**（`requireStrictDescriptor`），codec 的 `schema` 要 `{parse()}`；
+  而且生成的 strict 产物本身属于 dsh 包。手搓一份等于把生成器的语义复制进插件，风险远大于收益
+- 结论：**Host → 浏览器的新数据通道不要走 Remote，走下面这条同源 Fetch 路由**
+
+### 同源 Fetch 路由：插件往浏览器送 Host 数据的正路
+
+`ctx.connection.fetch.register({ path, methods, requestBody, fetch })`（`HostConnectionFetch`）——
+精确 Fetch 路由，挂在共享 `/api` 通道上，**路径必须写成 `/api/...` 且余下段匹配
+`/^[A-Za-z0-9_$.-]+$/`**（`endpointFromPath` + `assertFetchRoute`）。要点：
+
+- 路由在 dsh 的 Connection 层之后：`isTrustedApiRequest`（Host/Origin 围栏）+ 浏览器会话认证都已通过，
+  所以浏览器 `fetch('/api/<path>')` **同源**即可，不涉及 CORS、也不需要 token 头
+- 归属 fiber：`ctx.connection` 的 `this.ctx` 是**读它的那个 ctx**，所以 `ctx.inject(['connection'], …)`
+  里注册的路由随该 fiber 卸载
+- `connection` 是 web profile 才有的服务：非 web 部署里 `ctx.inject` 的回调不跑，插件其余能力不受影响
+- 类型来自 `@deepseek-ai/dsh-client-connection`（`declare module '@deepseek-ai/cordis'` 提供
+  `ctx.connection`）；只需 `import type {} from '@deepseek-ai/dsh-client-connection'` 拉声明合并
+- 参考实现：`packages/client/file-upload/src/index.ts:73`（`/api/session/uploadFileBinary`）、
+  `packages/session-query/session-log-export/src/index.ts:85`（`/api/session.export`）
+
+### 设置写入的现实约束（第 7 期踩到）
+
+`llm-pi-ai` 的 profile 里 `models` 是**整体替换**语义：用户层一旦写了数组，patch 预设的数组就不再生效。
+所以"往路由加一个模型"必须先把**当前生效的数组**读出来（用户层有则用用户层，否则用 `base`），
+再追加写回；直接写新数组会把预设的免费模型全部丢掉。
+
+`reasoning_options` 里的 `none` 不是 dsh 的档位键（`off|minimal|low|medium|high|xhigh|max`），
+映射必须是 `off: 'none'`（键 dsh、值线上）；写错键整节 schema 校验失败、写入被拒。

@@ -558,3 +558,57 @@ Content-Type: application/json
 | 工具 | `tools` + `tool_choice` 正常，`finish_reason: tool_calls` |
 
 `cached_tokens` 只在非流式与流式 usage 帧里出现，是命中率的唯一来源。
+
+---
+
+# 第 7 期实测补充（2026-09-11）
+
+统一前缀：`https://kenari.id`（以下都是相对裸域的路径，不在 `/v1` 下）。
+
+## `GET /v1/models` 是**完全公开**的
+
+带 key 与不带 key 的响应**逐字节相同**（同一次实测：51023 bytes，sha256 一致），
+`/v1/models` 的 OpenAPI security 也是 `[{}, { bearerAuth: [] }]`。
+所以目录读取**不应该要求 key**：没配 key 的部署也该能列模型、看能力与套餐。
+
+响应头带 `access-control-allow-origin: *` → 浏览器可以直连（但下面这条不行）。
+
+## `GET /api/plans`：套餐表（每个套餐覆盖哪些模型）
+
+官网「Langganan」页的数据源，文档明确说它读自 `GET /api/plans`。实测返回**数组**（5 个套餐）：
+
+```json
+[{ "id": "plan-ringan-v3", "name": "Indie", "price_idr": 49000,
+   "budget_5h_micro_idr": 0, "budget_week_micro_idr": 75000000000, "budget_month_micro_idr": 300000000000,
+   "scope_models": ["deepseek-v4-flash", "..."], "free_cache_models": ["mimo-v2-5"],
+   "free_daily_quota": null, "free_daily_quota_effective": 0,
+   "scope_discounts": {}, "referral_cashback_pct": 0.25, "web_search_daily": 50 }]
+```
+
+要点：
+
+- **没有 CORS 头**（带 `Origin` 请求也不回 `access-control-allow-origin`）→ 浏览器读不到；
+  要给界面用只能由 Host 侧代取（本插件走自己的同源 Fetch 路由，见 dsh 知识库 §15）
+- `scope_models` 用**裸 id**（`hy3`、`mimo-v2-5`），目录用带 `:free` 后缀的 id → join 必须归一，
+  且裸 id 应同时算作覆盖它的 `id:free` 变体
+- `plan` 语义（文档）：请求命中覆盖列表的模型才从套餐额度扣，不在列表里就直接走预付余额；
+  `free_daily_quota` 是 `:free` 模型的独立日额度，不占付费窗口
+- 实测 5 档：Indie(27) / Kreator(27) / Studio(27) / Agensi(30) / Enterprise(31) 个覆盖模型；
+  目录 80 个模型里 35 个至少被一档覆盖（2026-09-11）
+- `/api/public/pricing` 同样**没有 CORS 头**
+
+## 能力标签的判定依据（第 7 期定稿）
+
+`GET /v1/models`（默认目录）与 `GET /v1/models?modality=embedding` 是两本目录，实测 76 + 4 = 80 个模型。
+标签只能从两处事实推，不能猜：
+
+| 标签 | 依据 |
+| --- | --- |
+| image | `modalities.input` 含 `image`，或 `endpoints` 含 `images` |
+| audio | `modalities.input` 含 `audio`，或 `endpoints` 含 `audio_speech` / `audio_transcription` |
+| video | `modalities.input` 含 `video`，或 `endpoints` 含 `videos` |
+| pdf | `modalities.input` 含 `pdf` |
+| embedding | `modality === 'embedding'`（只在 `?modality=embedding` 目录里），或 `endpoints` 含 `embeddings` |
+
+生成类（图像/视频/TTS）只在 `endpoints` 体现，理解类（看图/听音频/读 PDF）只在 `modalities.input` 体现，
+所以两处都要看。2026-09-11 实测分布：image 46、pdf 27、audio 19、video 22、embedding 4。

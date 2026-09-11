@@ -465,6 +465,48 @@ README 内容：安装、key 获取、三协议选择与 base URL 区别、fallb
 
 **验证**（2026-09-10 实测）：`dsh plugin --profile web remove dsh-kenari-plugin` → profile 的 `package.json` 里依赖与 bundle 条目消失，`--dump-config` 中本插件相关行归零，`web` 行回到 base 默认（`deepseek-official` / `http`），`tool-web` 回到 `disabled: true`，`llm-pi-ai` 回到无 config；`dsh plugin --profile web add ./` 后逐项复原，启动无报错。安装时 pnpm 报的 peer 警告来自 dsh 自己的 `dsh-web-fetch-http`（缺 cordis / dsh-web 等 peer），与本插件无关。
 
+### ✅ 第 7 期｜可选模型筛选（2026-09-11 完成并验证）
+
+「设置 → 模型 → Kenari → 编辑 → 自定义设置 → 获取可用模型」这个对话框是 **dsh 的**
+（`ui-settings-models` 的 `ModelListEditor`），它只渲染 `candidate.id`，而 `LlmDiscoveredModel`
+只带 `id/name/contextWindow/maxTokens` —— 能力和套餐信息**既进不去也显示不出来**。红线不允许改它，
+所以本期做的是**同位置的能力/套餐扩展**，落在 dsh 为外部插件留的座上：
+
+- **浏览器侧**：注册 slot `settings.models.provider-card`（key = `llm-pi-ai`，dsh 声明这个槽位就是
+  "给仓库外插件往模型设置页加 UI，而不必改这一页"），只对 `kenari` 路由渲染。面板给出
+  1) 模型名后的能力标签（image / audio / video / pdf / embedding）、`免费` 标签与套餐名标签；
+  2) 搜索 + `plan`（套餐下拉）+ `free`/`image`/`audio`/`video`/`pdf`/`embedding` 过滤片（多选为 AND）；
+  3) 「加入所选到 kenari 路由」——按 pi-ai 语义**追加**到现有数组（用户层有数组就用它，否则用 patch 的预设），
+  不整体替换。
+- **Host 侧数据**：新增 `src/plans.ts`（`GET /api/plans` + TTL 缓存 + 模型→套餐归属索引）、
+  `src/catalog-view.ts`（注册同源 Fetch 路由 `GET /api/kenari.models`，返回已算好的能力标签、套餐归属
+  与可直接写入路由的 pi-ai profile）、`catalog.ts` 增加 `capabilityTagsOf` / `toModelProfile` /
+  `reasoningEffortsOf`。
+- **为什么不新建 Remote 命名空间**：客户端命名空间来自 `dsh-api-remotes` 里写死的装配清单，
+  插件加不了；而 `ctx.connection.fetch.register` 是 dsh 自己的公开扩展点（精确 Fetch 路由挂在 `/api` 下），
+  浏览器用同一会话同源读取即可，无需 CORS、无需新 Host API 包。标签只在 Host 算一次，
+  所以设置页与 `kenari_list_models` 不可能说两套话。
+- **顺带修正**：`KenariCatalog` 原来经带 key 的传输层抓公开的 `/v1/models`，没配 key 的部署会
+  `WEB_KENARI_NO_KEY`。实测带 key 与不带 key 的目录响应**逐字节相同**，故改走 `kenariPublicGet`
+  （不带 key）——没配 key 时正是最需要看目录与套餐的时候。
+
+**与会话的关系**：本面板不注册任何模型，也不改 `agent-default-model`；它只往 `llm-pi-ai` 路由的
+`models` 数组里追加用户勾选的条目。
+
+**验证**（2026-09-11 实测）：
+
+- `test/catalog-view.mjs`：真实抓公开目录（80 个模型，含 4 个 embedding）+ 套餐表（5 档），
+  逐条断言标签有目录依据、套餐 join 命中 35/80、`coverageOf` 对 `:free` id 归一；
+  **全部 80 个 profile 一次性通过真实的 `llm-pi-ai` Config（schemastery）校验**——这正是设置写入的那道关
+- `scripts/check-client.mjs`：两个 slot 注册都真实渲染一次（Kenari 行出面板、其它 pi-ai 路由返回 null）
+- 浏览器实测（`dsh --profile web --port 3099 --no-open`，不影响 3080 上用户实例）：
+  设置 → 模型 → Kenari 行出现面板，标签正确（`gemini-2-5-flash` → image+audio+video+pdf+五个套餐标签，
+  `gemini-3-1-flash-tts` → audio + 非会话模型，`deepseek-v4-flash` → 已在路由）；
+  筛选取值可复算：免费 13/80、再叠 image 5/80（AND）、清除回 80/80、套餐 Agensi 34/80；
+  Kenari 设置卡内同名面板同样渲染；两处都无 `data-slot-error`。
+  「加入所选」实测把 `deepseek-v4-pro` 写进 `~/.dsh/settings.yaml` 的 `llm-pi-ai.providers.kenari.models`
+  （17 → 18 条，写入通过 schema 校验），随后按备份逐字节还原（sha256 一致）
+
 ## 5. 实施前需确认的未知项
 
 未解除：

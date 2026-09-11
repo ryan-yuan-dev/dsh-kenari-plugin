@@ -24,7 +24,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/check-client.mjs",
     "check:client": "node scripts/check-client.mjs",
-    "test": "node test/real-harness.mjs"
+    "test": "node test/real-harness.mjs",
+    "test:view": "node test/catalog-view.mjs"
   },
   "dsh": {
     "bundle": {
@@ -33,7 +34,8 @@
     "client": {
       "platform": "web",
       "inject": [
-        "@deepseek-ai/dsh-client-ui-settings"
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-settings-models"
       ],
       "immediately": true
     }
@@ -44,6 +46,7 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
     "@deepseek-ai/dsh-attachment": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-connection": "0.1.5-rc.1",
     "@deepseek-ai/dsh-credentials": "0.1.5-rc.1",
     "@deepseek-ai/dsh-launch-environment": "0.1.5-rc.1",
     "@deepseek-ai/dsh-llm": "0.1.5-rc.1",
@@ -57,6 +60,7 @@
   },
   "devDependencies": {
     "@deepseek-ai/dsh-attachment": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-connection": "0.1.5-rc.1",
     "@deepseek-ai/dsh-util-values": "0.1.5-rc.1",
     "@types/node": "^24",
     "typescript": "^5.9.2"

@@ -7,7 +7,7 @@
  * @module dsh-kenari-plugin/catalog
  */
 
-import { kenariGet } from './http.js'
+import { kenariPublicGet, siteEndpoint } from './http.js'
 import type { KenariHttpDeps } from './http.js'
 
 /** 可当会话模型的端点（其余端点归为专用能力目录）。 */
@@ -107,6 +107,79 @@ export function inputModalitiesOf(model: KenariModel): ('text' | 'image')[] {
   const out: ('text' | 'image')[] = ['text']
   if (declared.includes('image')) out.push('image')
   return out
+}
+
+/** 设置界面用来筛选与标注的能力标签；值就是标签文案本身。 */
+export type CapabilityTag = 'image' | 'audio' | 'video' | 'pdf' | 'embedding'
+
+/** 标签展示顺序（固定，避免每次渲染顺序漂移）。 */
+export const CAPABILITY_TAGS: readonly CapabilityTag[] = ['image', 'audio', 'video', 'pdf', 'embedding']
+
+/**
+ * 目录行 → 能力标签。
+ *
+ * 判定用的是**输入**能力与端点两处事实，因为 Kenari 对同一件事只在一处给字段：
+ * - 生成类（图像/视频/语音合成）只有 `endpoints`，`modalities.input` 仍是 text
+ * - 理解类（看图/听音频/读 PDF）只有 `modalities.input`
+ * - embedding 模型只在 `?modality=embedding` 目录里，带 `modality: 'embedding'`
+ * 所以两个来源都要看，且都只看事实、不猜（缺字段就不打标签）。
+ */
+export function capabilityTagsOf(model: KenariModel): CapabilityTag[] {
+  const input = model.modalities?.input ?? []
+  const endpoints = model.endpoints ?? []
+  const tags: CapabilityTag[] = []
+  if (input.includes('image') || endpoints.includes('images')) tags.push('image')
+  if (input.includes('audio') || endpoints.includes('audio_speech') || endpoints.includes('audio_transcription')) tags.push('audio')
+  if (input.includes('video') || endpoints.includes('videos')) tags.push('video')
+  if (input.includes('pdf')) tags.push('pdf')
+  if (model.modality === 'embedding' || endpoints.includes('embeddings')) tags.push('embedding')
+  return tags
+}
+
+/** dsh `ModelThinkingLevel` 的键集合：reasoningEfforts 里写别的键会让设置写入被拒。 */
+const THINKING_LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+
+/**
+ * Kenari `reasoning_options` → pi-ai `reasoningEfforts`。
+ * Kenari 用 `none` 表示"支持但不发参数"，dsh 的对应键是 `off`；其余同名直通。
+ * 两侧都不认识的取值直接丢弃——写进设置会让 schemastery 校验整节失败。
+ */
+export function reasoningEffortsOf(model: KenariModel): Record<string, string> | undefined {
+  if (model.reasoning !== true) return undefined
+  const efforts: Record<string, string> = {}
+  for (const option of model.reasoning_options ?? []) {
+    const level = option === 'none' ? 'off' : option
+    if (THINKING_LEVELS.has(level)) efforts[level] = option
+  }
+  return Object.keys(efforts).length > 0 ? efforts : undefined
+}
+
+/**
+ * 目录行 → pi-ai provider profile 的 model 条目。
+ *
+ * 这是「把目录里的模型加进 `llm-pi-ai` 路由」时写进用户设置的形状，
+ * 字段必须逐个来自目录：pi-ai 的 schema 会拒绝多余或拼错的键。
+ * `maxTokens` 故意不写：它同时会成为每请求默认输出上限，
+ * 网关的真实上限不确定时写它会让长回答被静默截断。
+ */
+export function toModelProfile(model: KenariModel): {
+  id: string
+  name?: string
+  contextWindow?: number
+  input?: ('text' | 'image')[]
+  reasoningEfforts?: Record<string, string>
+} {
+  const efforts = reasoningEffortsOf(model)
+  const contextWindow = typeof model.context_length === 'number' && model.context_length > 0
+    ? model.context_length
+    : undefined
+  return {
+    id: model.id,
+    ...(model.name === undefined ? {} : { name: model.name }),
+    ...(contextWindow === undefined ? {} : { contextWindow }),
+    input: inputModalitiesOf(model),
+    ...(efforts === undefined ? {} : { reasoningEfforts: efforts }),
+  }
 }
 
 /** micro-IDR → IDR/1M tokens 的十进制字符串（整数不带小数点）。 */
@@ -249,7 +322,15 @@ export class KenariCatalog {
     const pending = this.inflight.get(key)
     if (pending !== undefined) return pending
     const query: Record<string, string> | undefined = modality === undefined ? undefined : { modality }
-    const request = kenariGet<{ data?: KenariModel[] }>(this.deps, '/models', query, signal, { retries: 1 })
+    // 目录无需 key（实测：带 key 与不带 key 的响应逐字节相同），所以走公开 GET：
+    // 没配 key 的部署也能列出模型——设置页正是用户还没有 key 时最需要它的地方。
+    const qs = query === undefined ? '' : `?${new URLSearchParams(query).toString()}`
+    const request = kenariPublicGet<{ data?: KenariModel[] }>(
+      this.deps,
+      `${siteEndpoint(this.deps.config.baseURL, '/v1/models')}${qs}`,
+      signal,
+      { retries: 1 },
+    )
       .then((payload) => {
         const models = (payload.data ?? []).filter((model): model is KenariModel => typeof model?.id === 'string')
         this.cache.set(key, { models, fetchedAt: Date.now() })

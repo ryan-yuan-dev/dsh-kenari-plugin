@@ -50,6 +50,28 @@ KENARI_API_KEY=kn-...
 
 预设**只放免费模型**：Rp 0 的新账户装上就能跑，不会因为手滑产生费用。要用付费模型，在 Settings → Models 里给 `kenari` 路由加一条 model entry，或在设置文档里加自己的路由。
 
+### 按能力与套餐挑模型
+
+预设只列了 11 个免费模型，而 Kenari 目录里实际有 80 个。**设置 → 模型 → Kenari** 这一行上会多出一块
+「Kenari 可选模型（能力 / 套餐筛选）」（Kenari 设置分区里也有同样的面板）：
+
+- 每个模型名后跟着**能力标签**（`image` / `audio` / `video` / `pdf` / `embedding`）、`免费`，
+  以及覆盖它的**套餐名**（Indie / Kreator / Studio / Agensi / Enterprise）
+- 过滤：搜索框、套餐下拉，以及 `免费` `image` `audio` `video` `pdf` `embedding` 过滤片
+  （多个过滤片是**同时满足**）
+- 勾选后可「加入所选到 kenari 路由」：**追加**到该路由现有模型之后，不会覆盖已有条目
+
+标签的口径：套餐标签 = 请求会从该套餐额度扣费（没有套餐标签 = 只能用预付余额 PAYG）；
+能力标签按目录事实推导——`image/audio/video/pdf` 看 `modalities.input` 与 `endpoints`，
+`embedding` 来自 `?modality=embedding` 目录。目录与套餐表都读**公开端点**，所以还没有 key 时也能看。
+
+面板由 Host 侧算好数据（`GET /api/kenari.models`），浏览器只渲染，
+所以它和 `kenari_list_models` 报的是同一套事实。
+
+> dsh 自带的「获取可用模型」对话框只显示模型 id，插件无法往里加标签或过滤器
+> （那是 dsh 自己的组件，且它收到的字段只有 `id/name/contextWindow/maxTokens`）。
+> 需要筛选时用上面这块面板。
+
 ## 三条协议线与 base URL
 
 Kenari 同时提供三条线，**base URL 形状不同，写错返回 405 而不是 404**：
@@ -91,7 +113,7 @@ Kenari 同时提供三条线，**base URL 形状不同，写错返回 405 而不
 
 | 类别 | 工具 |
 | --- | --- |
-| 目录与文档 | `kenari_list_models`（含免费分组、价格、上下文、下线与 beta 告警）、`kenari_search_docs` |
+| 目录与文档 | `kenari_list_models`（含免费分组、价格、上下文、下线与 beta 告警；公开目录，**不需要 key**）、`kenari_search_docs`（同样不需要 key） |
 | 账户 | `kenari_balance`、`kenari_usage`、`kenari_quota`（分享页 key 会 403，见下） |
 | 搜索 | `kenari_x_search`（handles 互斥、≤20、日期校验） |
 | 文档 | `kenari_ocr`（`reuse_id` 复用免费） |

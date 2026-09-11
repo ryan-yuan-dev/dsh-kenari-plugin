@@ -20,6 +20,8 @@ import type { KenariHttpDeps, ResolveApiKey } from './http.js'
 import type { ToolsDeps } from './tools/shared.js'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { KenariCatalog } from './catalog.js'
+import { KenariPlans } from './plans.js'
+import { registerCatalogView } from './catalog-view.js'
 import { BalanceMonitor, BillingLedger } from './billing.js'
 import { installKenariSettings, KENARI_SETTINGS_NAMESPACE } from './settings.js'
 import { KenariLlmAdapter } from './llm/adapter.js'
@@ -132,6 +134,7 @@ export function apply(ctx: Context, config: Config): void {
   // 目录与账本是跨工具共享的进程级单例：目录带 TTL 缓存，账本按会话作用域累计。
   // 先于 provider 建立，web 搜索/抓取的按次扣费也记进同一本账（global 作用域）。
   const catalog = new KenariCatalog(deps)
+  const plans = new KenariPlans(deps)
   const budgetCapRp = config.budgetCapRp ?? 0
   const billing = new BillingLedger(budgetCapRp > 0 ? budgetCapRp * 1_000_000 : undefined)
   const balance = new BalanceMonitor(deps)
@@ -207,6 +210,11 @@ export function apply(ctx: Context, config: Config): void {
   } else {
     logger?.info('kenari: web providers registered (tools disabled by config)')
   }
+
+  // 浏览器侧「可选模型」面板的数据端点（能力标签 + 套餐归属）。
+  // 只在挂载了 connection 的 web profile 生效；数据与目录/套餐缓存同源，
+  // 所以设置页看到的标签与 kenari_list_models 说的是同一件事。
+  registerCatalogView(ctx, { http: deps, catalog, plans })
 
   // 第 5 期（可选）：自带 LlmAdapter。默认关闭，且路由名与 llm-pi-ai 预设不同，
   // 所以两条路可以并存、可以回退；开启后模型的 usage 与费用也进同一本账。

@@ -124,9 +124,10 @@ const hostSource = readFileSync(join(root, 'src/settings.ts'), 'utf8')
 const hostNs = /KENARI_SETTINGS_NAMESPACE = '([^']+)'/.exec(hostSource)?.[1]
 check('client NS matches the Host settings namespace', hostNs === exports.NS, `host=${hostNs} client=${exports.NS}`)
 
-// Render the registered section once against fake services. Catches what the
+// Render every registered slot once against fake services. Catches what the
 // browser would otherwise show as an empty panel: a ReferenceError, a bad prop
-// access, or a component that returns nothing.
+// access, or a component that returns nothing. Both registrations are exercised
+// because both render bodies are hand-written.
 try {
   const registered = []
   const snapshot = {
@@ -140,6 +141,13 @@ try {
     },
     base: {}, user: { baseURL: 'https://kenari.id/v1' }, revision: 1, writable: true, mode: 'host',
   }
+  // The pi-ai namespace as `settings.describe()` reports it: the composition
+  // layer owns the preset models, which is what the panel appends to.
+  const piAiView = {
+    ns: 'llm-pi-ai', schema: {}, revision: 7, applies: true, secrets: [],
+    value: { providers: { kenari: { models: [{ id: 'step-3-7-flash:free' }] } } },
+    base: { providers: { kenari: { models: [{ id: 'step-3-7-flash:free' }] } } },
+  }
   const ctx = {
     settingsScope: {
       bind: () => ({ getSnapshot: () => snapshot, subscribe: () => () => {}, set: async () => {}, mutate: async () => {}, unset: async () => {} }),
@@ -147,6 +155,7 @@ try {
     remote: {
       llm: { discoverModels: async () => ({ ok: true, value: [{ id: 'step-3-7-flash:free', name: 'x', contextWindow: 262144 }] }) },
       credentials: { describe: async () => ({ ok: true, value: { KENARI_API_KEY: { configured: true, source: 'user-env', writable: false } } }) },
+      settings: { describe: async () => ({ ok: true, value: { writable: true, hasDocument: true, namespaces: [piAiView] } }) },
     },
     slots: {
       inject: (_slot, register) => register(),
@@ -157,11 +166,22 @@ try {
     },
   }
   exports.apply(ctx)
-  check('apply registers exactly one settings section', registered.length === 1 && registered[0].options.name === 'settings.section', `${registered.length} registration(s)`)
-  const tree = registered[0].component({ close: () => {}, ...registered[0].options.inject() })
+  const section = registered.find((entry) => entry.options.name === 'settings.section')
+  check('apply registers the settings section', section !== undefined, `${registered.length} registration(s)`)
+  const tree = section.component({ close: () => {}, ...section.options.inject() })
   check('section renders a non-empty element tree', tree !== undefined && tree !== null && typeof tree === 'object')
+
+  const card = registered.find((entry) => entry.options.name === 'settings.models.provider-card')
+  check('apply registers the models provider-card seat', card !== undefined && card.options.key === 'llm-pi-ai',
+    card === undefined ? 'missing' : `key=${card.options.key}`)
+  const cardFace = card.options.inject()
+  // Both faces: the Kenari row renders the panel, another pi-ai route renders nothing.
+  const kenariRow = card.component({ provider: { provider: 'kenari', settingsNs: 'llm-pi-ai' }, configured: true, keyConfigured: true, ...cardFace })
+  check('provider-card panel renders for the kenari route', kenariRow !== undefined && kenariRow !== null)
+  const otherRow = card.component({ provider: { provider: 'acme-gateway', settingsNs: 'llm-pi-ai' }, configured: true, keyConfigured: false, ...cardFace })
+  check('provider-card panel renders nothing for another pi-ai route', otherRow === null)
 } catch (err) {
-  check('section renders without throwing', false, String(err && err.stack ? err.stack.split('\n')[0] : err))
+  check('slots render without throwing', false, String(err && err.stack ? err.stack.split('\n')[0] : err))
 }
 
 // The loader reads this export path; a typo means "no bundle" at activation.
