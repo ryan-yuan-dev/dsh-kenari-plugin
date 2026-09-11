@@ -234,6 +234,26 @@ check(
   'capability filters are ANDed',
   ids(internals.derivePanel(VIEW, ROUTE, '', { image: true, pdf: true }, []).visible) === 'beta',
 )
+// The exclusive pair is not a taste call: both at once can only ever match
+// nothing, because a free model is never plan-covered. If that ever changes,
+// this assertion is what says the mutual exclusion should be revisited.
+check(
+  'a free model is never plan-covered, so both filters at once matches nothing',
+  internals.derivePanel(VIEW, ROUTE, '', { plan: true, free: true }, []).visible.length === 0,
+)
+check(
+  '套餐内 and 免费 release each other instead of stacking',
+  JSON.stringify(internals.toggleFilter({}, 'free')) === '{"free":true}'
+  && JSON.stringify(internals.toggleFilter({ free: true }, 'plan')) === '{"plan":true}'
+  && JSON.stringify(internals.toggleFilter({ plan: true }, 'free')) === '{"free":true}'
+  && JSON.stringify(internals.toggleFilter({ plan: true }, 'plan')) === '{}',
+  JSON.stringify(internals.toggleFilter({ free: true }, 'plan')),
+)
+check(
+  'a capability filter leaves the exclusive pair alone',
+  JSON.stringify(internals.toggleFilter({ plan: true }, 'image')) === '{"plan":true,"image":true}',
+  JSON.stringify(internals.toggleFilter({ plan: true }, 'image')),
+)
 check(
   'search is case-insensitive over id and name',
   ids(internals.derivePanel(VIEW, ROUTE, 'BET', {}, []).visible) === 'beta',

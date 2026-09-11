@@ -46,7 +46,7 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
     const React = require('react')
-    const { Modal, Button, Pill, Tag } = require('@deepseek-ai/dsh-client-ui-primitives')
+    const { Modal, Button, Tag } = require('@deepseek-ai/dsh-client-ui-primitives')
 
     /** Must match the Host-side `KENARI_SETTINGS_NAMESPACE`. */
     const NS = 'kenari'
@@ -163,6 +163,14 @@ window.__ModuleLoader__.load({
       error: { margin: 0, color: '#c0392b', fontSize: '12px' },
       toolbar: { display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' },
       filterRow: { display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' },
+      // Filter chips are buttons, but they wear the tag vocabulary: a capsule
+      // outlined in BOTH states, where selecting only fills it and raises the
+      // weight. dsh's `Pill` is the wrong atom here — it drops the outline when
+      // idle, and its active fill is nearly the dialog's own background, so a
+      // selected filter read as plain text instead of as a chip. Tokens keep
+      // both themes honest.
+      filterChip: { display: 'inline-flex', alignItems: 'center', height: '24px', padding: '0 10px', borderRadius: '999px', border: '1px solid var(--dsw-alias-border-l4)', background: 'transparent', color: 'var(--dsw-alias-label-secondary)', font: 'inherit', fontSize: '12px', cursor: 'pointer' },
+      filterChipOn: { display: 'inline-flex', alignItems: 'center', height: '24px', padding: '0 10px', borderRadius: '999px', border: '1px solid var(--dsw-alias-border-l4)', background: 'var(--dsw-alias-bg-module-platform)', color: 'var(--dsw-alias-label-primary)', font: 'inherit', fontSize: '12px', fontWeight: 600, cursor: 'pointer' },
       // The search box is the one control dsh's Input atom cannot carry here:
       // that atom wraps the field in a fixed-height inline-flex box whose width
       // comes from a class this bundle cannot pass, so the field would size to
@@ -328,6 +336,31 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 套餐内 and 免费 are one choice, not two.
+     *
+     * A free model is never plan-covered (`planCovered` excludes it on purpose),
+     * so the two dimensions can never both match — selecting both could only ever
+     * show an empty list. Picking one therefore releases the other, which is also
+     * what the reader means by them: "show me what my plan pays for" and "show me
+     * what costs nothing" are answers to the same question. Capability tags stay
+     * multi-select (they are ANDed).
+     */
+    const EXCLUSIVE_FILTERS = { plan: 'free', free: 'plan' }
+
+    /** Toggle one filter dimension, enforcing the exclusive pair above. */
+    function toggleFilter(flags, tag) {
+      const next = { ...flags }
+      if (next[tag] === true) {
+        delete next[tag]
+        return next
+      }
+      next[tag] = true
+      const released = EXCLUSIVE_FILTERS[tag]
+      if (released !== undefined) delete next[released]
+      return next
+    }
+
+    /**
      * One render's worth of derived catalog facts, in one pure function so the
      * filter/count logic is testable without React (the build gate does that).
      * `known` is "already in the route's model array", which is what turns a
@@ -457,12 +490,7 @@ window.__ModuleLoader__.load({
       const derived = derivePanel(view, routeState, query, flags, picked)
 
       const toggleFlag = (tag) => {
-        setFlags((current) => {
-          const next = { ...current }
-          if (next[tag] === true) delete next[tag]
-          else next[tag] = true
-          return next
-        })
+        setFlags((current) => toggleFilter(current, tag))
       }
       const togglePick = (id) => {
         setPicked((current) => current.indexOf(id) === -1
@@ -514,11 +542,13 @@ window.__ModuleLoader__.load({
       // Every dimension is one chip of the same kind: plan, free, then the
       // capability tags. No plan NAMES appear anywhere — a reader filtering by
       // subscription wants "covered by a plan", not a pick-one-of-five tier.
+      // 套餐内 and 免费 are one choice rather than two (see `toggleFilter`).
       const chips = ['plan', 'free'].concat(panel.derived.tags).map((tag) => React.createElement(
-        Pill,
+        'button',
         {
           key: tag,
-          active: panel.flags[tag] === true,
+          type: 'button',
+          style: panel.flags[tag] === true ? styles.filterChipOn : styles.filterChip,
           'aria-pressed': panel.flags[tag] === true,
           onClick: () => {
             panel.toggleFlag(tag)
@@ -1164,6 +1194,7 @@ window.__ModuleLoader__.load({
       routeModelsOf,
       planCovered,
       matchesFilters,
+      toggleFilter,
       derivePanel,
       cardWithMarker,
       ModelCatalogModal,
