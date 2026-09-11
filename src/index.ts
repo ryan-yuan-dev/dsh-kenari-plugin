@@ -13,6 +13,7 @@ import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import { DeepSeekSearchProvider } from '@deepseek-ai/dsh-web-search-deepseek'
 import { HttpFetchProvider, DEFAULT_USER_AGENT } from '@deepseek-ai/dsh-web-fetch-http'
 import { credentialRef, type CredentialRef } from '@deepseek-ai/dsh-credentials'
+import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { KenariSearchProvider } from './web/search.js'
 import { KenariFetchProvider } from './web/fetch.js'
 import { KenariFirstSearch, KenariFirstFetch } from './web/fallback.js'
@@ -25,6 +26,10 @@ import { registerCatalogView } from './catalog-view.js'
 import { BalanceMonitor, BillingLedger } from './billing.js'
 import { installKenariSettings, KENARI_SETTINGS_NAMESPACE } from './settings.js'
 import { KenariLlmAdapter } from './llm/adapter.js'
+import { ModelCandidates } from './llm/candidates.js'
+import { installModelRecovery } from './llm/recovery.js'
+import type { Target } from './llm/recovery.js'
+import { kenariRetryPolicy } from './llm/retry.js'
 import { registerDocsTools } from './tools/docs.js'
 import { registerAccountTools } from './tools/account.js'
 import { registerXSearchTool } from './tools/x-search.js'
@@ -146,6 +151,32 @@ function resolveApiKeyOf(ctx: Context, refOf: () => CredentialRef): ResolveApiKe
 }
 
 /**
+ * 读 dsh 默认模型选择的访问器。
+ *
+ * `agentDefaultModel` 的宿主声明在 `@deepseek-ai/dsh-agent-default-model` 里。为了一个类型
+ * 新增构建期依赖（还要动 pnpm 的发布年龄豁免清单）不划算，所以按公开形状结构化读取：
+ * 服务缺失或形状不符时返回 undefined，回退阶段自动退化为「放弃」。
+ * 参考 packages/core/agent-default-model/src/index.ts:64-107。
+ */
+interface DefaultModelLike {
+  currentSelection(): { provider: string; model: string; reasoningEffort?: ReasoningEffortId }
+}
+
+function defaultSelectionOf(ctx: Context): () => Target | undefined {
+  const service = ctx.get('agentDefaultModel') as DefaultModelLike | undefined
+  if (service === undefined || typeof service.currentSelection !== 'function') return () => undefined
+  return () => {
+    const selection = service.currentSelection()
+    if (typeof selection?.provider !== 'string' || typeof selection?.model !== 'string') return undefined
+    return {
+      provider: selection.provider,
+      model: selection.model,
+      ...(typeof selection.reasoningEffort === 'string' ? { reasoningEffort: selection.reasoningEffort } : {}),
+    }
+  }
+}
+
+/**
  * Register the Kenari capability into the harness.
  * 第 1 期 web fallback；第 2 期 REST 工具；第 3 期目录 / 计费账本 / 窗口监控；
  * 第 4 期设置节（Host 半边）。
@@ -252,7 +283,17 @@ export function apply(ctx: Context, config: Config): void {
   if (config.nativeAdapterEnabled === true) {
     const providerId = config.nativeProviderId ?? 'kenari-direct'
     const adapter = new KenariLlmAdapter(
-      { http: deps, catalog, billing, logger },
+      {
+        http: deps,
+        catalog,
+        billing,
+        logger,
+        retryPolicy: kenariRetryPolicy({
+          maxRetries: liveConfig.modelRetryMaxRetries ?? 5,
+          delayMs: liveConfig.modelRetryDelayMs ?? 5_000,
+          retryableCodes: liveConfig.modelRetryableCodes,
+        }),
+      },
       (imageRef) => {
         const attachments = ctx.get('attachments')
         if (attachments === undefined) return Promise.reject(new Error('本部署没有 attachment 存储，无法回传图像'))
@@ -273,4 +314,32 @@ export function apply(ctx: Context, config: Config): void {
       logger?.info(`kenari: native LlmAdapter registered for route "${providerId}"`)
     })
   }
+
+  // 模型失败恢复：重试用尽后换模型、再回退默认 provider。
+  // llm 是可选 seam，缺它整块不装 —— 与自带适配器同一模式，插件其余能力不受影响。
+  ctx.inject(['llm'], (llmCtx) => {
+    const llm = llmCtx.llm
+    const candidates = new ModelCandidates({
+      // 显式转发而不是直接传 llmCtx.llm：LlmRuntime 的方法依赖 this，
+      // 脱开接收者调用会在内部 this.registration(...) 处炸掉
+      llm: {
+        listProviders: () => llm.listProviders(),
+        listModels: (provider) => llm.listModels(provider),
+        resolveModelInfo: (provider, model, signal) => llm.resolveModelInfo(provider, model, signal),
+      },
+      cacheTtlMs: liveConfig.catalogCacheTtlMs ?? 3_600_000,
+    })
+    installModelRecovery(llmCtx, {
+      enabled: liveConfig.modelRecoveryEnabled ?? true,
+      providers: liveConfig.modelRecoveryProviders ?? ['kenari', 'kenari-direct'],
+      switchEnabled: liveConfig.modelSwitchEnabled ?? true,
+      switchDelayMs: liveConfig.modelSwitchDelayMs ?? 5_000,
+      skipCodes: liveConfig.modelSwitchSkipCodes ?? [],
+      noticeEnabled: liveConfig.modelSwitchNoticeEnabled ?? true,
+      candidates,
+      defaultSelection: defaultSelectionOf(ctx),
+      ...(logger === undefined ? {} : { logger }),
+    })
+    logger?.info('kenari: model failure recovery installed (retry → model switch → default provider)')
+  })
 }

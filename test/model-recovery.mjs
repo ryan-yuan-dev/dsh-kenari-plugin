@@ -301,6 +301,87 @@ check('the native adapter exposes the configured retry policy',
 check('the native adapter stays policy-free when not configured',
   new KenariLlmAdapter(shellDeps).providerRetryPolicy('kenari-direct') === undefined)
 
+// ------------------------------------------------------ assembly integration
+// 上面验证的是 installModelRecovery 本身；这一段验证 apply 真的把它接上了 ——
+// 接线断掉的话单元测试照样全绿。
+const { apply } = await import('../lib/index.js')
+
+const makeLlmSeam = () => ({
+  listProviders: () => [{ id: 'kenari' }, { id: 'deepseek-official' }],
+  listModels: async (provider) => (DIRECTORY[provider] ?? []).map(([id]) => ({ id, provider, name: id })),
+  resolveModelInfo: async (provider, model) => {
+    const entry = (DIRECTORY[provider] ?? []).find(([id]) => id === model)
+    return entry === undefined ? {} : { context: { contextWindow: entry[1] } }
+  },
+  registerAdapter: () => ({ replace() {}, dispose() {} }),
+  registerModelDiscovery: () => {},
+})
+
+const loadPlugin = async (overrides = {}, options = {}) => {
+  const ctx = new Context()
+  ctx.provide('web', { registerSearchProvider() {}, registerFetchProvider() {} })
+  ctx.provide('tools', { register() {}, schemas: () => [] })
+  ctx.provide('llm', makeLlmSeam())
+  if (options.provideDefault !== false) {
+    ctx.provide('agentDefaultModel', {
+      currentSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-flash' }),
+    })
+  }
+  ctx.plugin({ name: 'kenari', inject: ['web', 'tools'], apply }, { ...Config({}), modelSwitchDelayMs: 5, ...overrides })
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  return ctx
+}
+
+const failure = { message: 'boom', code: 'SERVER' }
+const kenariFailure = (step = 1) => ({
+  turn: 1, step, provider: 'kenari', failure, retryPolicy: undefined, signal: signal(),
+})
+
+const wiredCtx = await loadPlugin()
+const wiredSession = makeSession('asm')
+wiredSession.state.current = { provider: 'kenari', model: 'current', contextWindow: 8192 }
+const wiredDispatch = agentEvents(wiredCtx, makeAgent(wiredSession))
+const wiredAction = await wiredDispatch.waterfall('agent/request-error', kenariFailure(), () => Promise.resolve(undefined))
+check('apply wires recovery in (a kenari failure schedules a retry)',
+  wiredAction?.kind === 'retry', JSON.stringify(wiredAction))
+const wiredNext = await wiredDispatch.waterfall(
+  'agent/request',
+  { turn: 1, step: 1, signal: signal() },
+  () => Promise.resolve({ provider: 'kenari', model: 'current' }),
+)
+check('...and the switch reaches the request', wiredNext.model === 'big', String(wiredNext.model))
+
+// 第二次失败 → 走 apply 里读到的真实 dsh 默认 provider
+wiredSession.state.current = { provider: 'kenari', model: 'big', contextWindow: 262144 }
+const wiredSecond = await wiredDispatch.waterfall('agent/request-error', kenariFailure(), () => Promise.resolve(undefined))
+const wiredFallback = await wiredDispatch.waterfall(
+  'agent/request',
+  { turn: 1, step: 1, signal: signal() },
+  () => Promise.resolve({ provider: 'kenari', model: 'current' }),
+)
+check('...and the second stage reaches the real dsh default provider',
+  wiredSecond?.kind === 'retry' && wiredFallback.provider === 'deepseek-official',
+  `${wiredFallback.provider}/${wiredFallback.model}`)
+
+// 总开关关掉时 apply 不该装恢复机制
+const switchedOff = await loadPlugin({ modelRecoveryEnabled: false })
+const offSession = makeSession('off')
+offSession.state.current = { provider: 'kenari', model: 'current', contextWindow: 8192 }
+const offDispatch = agentEvents(switchedOff, makeAgent(offSession))
+check('modelRecoveryEnabled: false skips the wiring entirely',
+  (await offDispatch.waterfall('agent/request-error', kenariFailure(), () => Promise.resolve(undefined))) === undefined)
+
+// agentDefaultModel 服务缺失时必须优雅退化：换模型照做，回退阶段放弃而不是抛错
+const noDefault = await loadPlugin({}, { provideDefault: false })
+const noDefaultSession = makeSession('nodefault')
+noDefaultSession.state.current = { provider: 'kenari', model: 'current', contextWindow: 8192 }
+const noDefaultDispatch = agentEvents(noDefault, makeAgent(noDefaultSession))
+check('without agentDefaultModel the model switch still works',
+  (await noDefaultDispatch.waterfall('agent/request-error', kenariFailure(), () => Promise.resolve(undefined)))?.kind === 'retry')
+noDefaultSession.state.current = { provider: 'kenari', model: 'big', contextWindow: 262144 }
+check('...and the default-provider stage degrades to giving up instead of throwing',
+  (await noDefaultDispatch.waterfall('agent/request-error', kenariFailure(), () => Promise.resolve(undefined))) === undefined)
+
 const failed = results.filter((row) => !row.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 if (failed.length > 0) console.log('FAILED:', failed.map((row) => row.name).join(' | '))

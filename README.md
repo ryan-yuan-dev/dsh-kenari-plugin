@@ -100,6 +100,47 @@ Kenari 同时提供三条线，**base URL 形状不同，写错返回 405 而不
 
 `available()` 契约禁止发网络请求，所以 Kenari 真不可用时**必须等调用失败才发现**，用户会感知一次额外延迟。不想要这个替换：把插件配置 `fallbackEnabled` 设为 `false`（需重启）。
 
+## 模型调用失败自动恢复
+
+Kenari 路由（`kenari` 与 `kenari-direct`）的会话模型调用失败时自动恢复，不需要人工介入：
+
+1. **重试**：按固定 5s 间隔重试 5 次。这一步由 dsh 自带的 `dsh-llm-retry` 执行，会话里会留下 `llm/retry` 记录，界面上显示为「正在重试」。
+2. **换模型**：重试用尽后换一个上下文窗口 >= 当前模型的模型——先在同一 provider 内挑最小的够用者，同 provider 没有候选再跨 provider 找。
+3. **回退默认 provider**：换模型仍失败，回退到 dsh 的默认 provider/model（当前是 `deepseek-official` / `deepseek-flash`）。
+
+三步都失败，该轮才以错误结束。因为重试与换模型都发生在**同一个 step 内**，任务不会中断，
+所以插件不会再发一条「继续」消息去重启任务。
+
+换模型时不继承原模型的 `reasoningEffort`：档位是按模型定义的，跨模型直接搬可能非法。
+换模型后会往会话注入一条 `notice` 消息说明这次切换，可用 `modelSwitchNoticeEnabled` 关掉。
+你手动选模型（`/model`）会清除自动切换，人工选择优先。
+
+### 配置
+
+| 字段 | 默认 | 说明 |
+| --- | --- | --- |
+| `modelRecoveryEnabled` | `true` | 总开关 |
+| `modelRecoveryProviders` | `['kenari','kenari-direct']` | 参与恢复的路由 |
+| `modelRetryMaxRetries` | `5` | 重试次数（`kenari-direct` 路由） |
+| `modelRetryDelayMs` | `5000` | 每次重试前的固定等待 |
+| `modelRetryableCodes` | `EMPTY_RESPONSE`/`RATE_LIMIT`/`SERVER`/`TIMEOUT`/`TRANSPORT` | 可重试的失败码，不能为空 |
+| `modelSwitchEnabled` | `true` | 关掉则只重试 |
+| `modelSwitchDelayMs` | `5000` | 换模型/回退前的等待 |
+| `modelSwitchSkipCodes` | `AUTH`/`INVALID_CREDENTIAL`/`MISSING_CREDENTIAL`/`QUOTA` | 跳过同 provider 换模型，直接回退 provider（同账号的问题换模型没用） |
+| `modelSwitchNoticeEnabled` | `true` | 换模型时注入切换通知 |
+
+`CONTEXT_WINDOW_EXCEEDED` **刻意不在**可重试集里：同模型同上下文重试必然再失败，
+这类错误直接进换模型阶段。这一步往往正是恢复能生效的地方。
+
+### 两个要知道的限制
+
+- **重试参数在 `llm-pi-ai` 路由上取自 `cordis.patch.yml` 的 `providers.kenari.retryPolicy`**，
+  不是上面的插件配置。dsh 在适配器注册时就冻结了路由的重试策略，插件改不了它；
+  patch 里的默认值与上表一致，改一个要记得改另一个。
+- **连接中断类失败（`TRANSPORT`）在服务端可能已经完成并计费**，重试会造成第二次计费。
+  介意的话把 `modelRetryableCodes` 调小——注意这与生成类端点（图像/音频/视频）的
+  「超时不重试」是两回事，那条规则管的是按次计费的 REST 端点。
+
 ## 计费与预算
 
 工具每次会带一行费用回显：
