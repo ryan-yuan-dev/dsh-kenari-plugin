@@ -71,6 +71,88 @@ check('sleepUnlessAborted returns false when aborted mid-wait',
 check('sleepUnlessAborted returns true after the full wait',
   (await sleepUnlessAborted(10, new AbortController().signal)) === true)
 
+// ----------------------------------------------------------- model candidates
+const { ModelCandidates } = await import('../lib/llm/candidates.js')
+
+const DIRECTORY = {
+  kenari: [['small', 4096], ['current', 8192], ['big', 262144], ['huge', 1_000_000]],
+  'deepseek-official': [['deepseek-flash', 65536], ['deepseek-pro', 131072]],
+  other: [['other-max', 2_000_000]],
+}
+
+const makeDirectory = (overrides = {}) => {
+  const calls = { listModels: 0 }
+  return {
+    calls,
+    listProviders: () => Object.keys(DIRECTORY).map((id) => ({ id })),
+    listModels: async (provider) => {
+      calls.listModels += 1
+      return (DIRECTORY[provider] ?? []).map(([id]) => ({ id }))
+    },
+    resolveModelInfo: async (provider, model) => {
+      const entry = (DIRECTORY[provider] ?? []).find(([id]) => id === model)
+      return entry === undefined ? {} : { context: { contextWindow: entry[1] } }
+    },
+    ...overrides,
+  }
+}
+
+const directory = makeDirectory()
+const candidates = new ModelCandidates({ llm: directory, cacheTtlMs: 60_000 })
+
+const sameProvider = await candidates.pick({ provider: 'kenari', model: 'current', contextWindow: 8192 })
+check('picks the smallest sufficient model in the same provider',
+  sameProvider?.provider === 'kenari' && sameProvider?.model === 'big',
+  `${sameProvider?.provider}/${sameProvider?.model}`)
+
+const excluded = await candidates.pick({ provider: 'kenari', model: 'small', contextWindow: 4096 })
+check('never picks the model that just failed',
+  excluded?.model === 'current', String(excluded?.model))
+
+check('reuses the cached directory within the TTL', directory.calls.listModels === 1, String(directory.calls.listModels))
+
+const crossProvider = await candidates.pick({ provider: 'kenari', model: 'huge', contextWindow: 1_000_000 })
+check('falls back to another provider when the same one has no candidate',
+  crossProvider?.provider === 'other' && crossProvider?.model === 'other-max',
+  `${crossProvider?.provider}/${crossProvider?.model}`)
+
+const unknownWindow = await candidates.pick({ provider: 'kenari', model: 'huge' })
+check('treats an unknown current window as 0 so any known window qualifies',
+  unknownWindow?.model === 'small', String(unknownWindow?.model))
+
+const none = await candidates.pick({ provider: 'kenari', model: 'current', contextWindow: 5_000_000 })
+check('returns undefined when nothing is big enough', none === undefined)
+
+// TTL 为 0 时必须每次都重新读目录，否则模型上下线不会反映出来
+const fresh = makeDirectory()
+const uncached = new ModelCandidates({ llm: fresh, cacheTtlMs: 0 })
+await uncached.pick({ provider: 'kenari', model: 'current', contextWindow: 8192 })
+await uncached.pick({ provider: 'kenari', model: 'current', contextWindow: 8192 })
+check('a zero TTL re-reads the directory every time', fresh.calls.listModels === 2, String(fresh.calls.listModels))
+
+// 同窗口的并列必须确定性取小 id，否则同一份配置在不同机器上会换到不同模型
+const tieDirectory = makeDirectory({
+  listProviders: () => [{ id: 'tie' }],
+  listModels: async () => [{ id: 'bbb' }, { id: 'aaa' }],
+  resolveModelInfo: async () => ({ context: { contextWindow: 100 } }),
+})
+const tie = await new ModelCandidates({ llm: tieDirectory, cacheTtlMs: 60_000 })
+  .pick({ provider: 'tie', model: 'zzz', contextWindow: 1 })
+check('breaks ties deterministically by model id', tie?.model === 'aaa', String(tie?.model))
+
+// 单个模型的元数据解析失败不能毁掉整个候选列表
+const partialDirectory = makeDirectory({
+  resolveModelInfo: async (provider, model) => {
+    if (model === 'big') throw new Error('metadata unavailable')
+    const entry = (DIRECTORY[provider] ?? []).find(([id]) => id === model)
+    return entry === undefined ? {} : { context: { contextWindow: entry[1] } }
+  },
+})
+const partial = await new ModelCandidates({ llm: partialDirectory, cacheTtlMs: 60_000 })
+  .pick({ provider: 'kenari', model: 'current', contextWindow: 8192 })
+check('skips models whose metadata cannot be resolved',
+  partial?.model === 'huge', String(partial?.model))
+
 const failed = results.filter((row) => !row.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 if (failed.length > 0) console.log('FAILED:', failed.map((row) => row.name).join(' | '))
