@@ -110,13 +110,19 @@ window.__ModuleLoader__.load({
       chip: { padding: '2px 9px', borderRadius: '999px', border: '1px solid rgba(127,127,127,0.4)', background: 'transparent', color: 'inherit', font: 'inherit', fontSize: '12px', cursor: 'pointer' },
       chipOn: { padding: '2px 9px', borderRadius: '999px', border: '1px solid currentColor', background: 'rgba(127,127,127,0.18)', color: 'inherit', font: 'inherit', fontSize: '12px', cursor: 'pointer', fontWeight: 600 },
       search: { flex: '1 1 160px', minWidth: '120px', boxSizing: 'border-box', padding: '3px 8px', border: '1px solid rgba(127,127,127,0.4)', borderRadius: '6px', background: 'transparent', color: 'inherit', font: 'inherit' },
-      capTag: { display: 'inline-block', marginLeft: '5px', padding: '0 6px', borderRadius: '4px', border: '1px solid rgba(127,127,127,0.35)', fontSize: '11px', opacity: 0.85 },
-      planTag: { display: 'inline-block', marginLeft: '5px', padding: '0 6px', borderRadius: '999px', background: 'rgba(46,134,222,0.16)', border: '1px solid rgba(46,134,222,0.45)', fontSize: '11px' },
+      // Tags never shrink — a squeezed badge is unreadable. The row wraps
+      // instead, so a model with five capabilities and a subscription tag
+      // pushes its badges onto a second line and keeps every one at full width.
+      capTag: { display: 'inline-block', flexShrink: 0, whiteSpace: 'nowrap', padding: '0 6px', borderRadius: '4px', border: '1px solid rgba(127,127,127,0.35)', fontSize: '11px', opacity: 0.85 },
+      planTag: { display: 'inline-block', flexShrink: 0, whiteSpace: 'nowrap', padding: '0 6px', borderRadius: '999px', background: 'rgba(46,134,222,0.16)', border: '1px solid rgba(46,134,222,0.45)', fontSize: '11px' },
       list: { maxHeight: '320px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '2px', border: '1px solid rgba(127,127,127,0.18)', borderRadius: '6px', padding: '6px 8px' },
-      item: { display: 'flex', gap: '8px', alignItems: 'baseline', padding: '2px 0' },
+      // The id and its name travel as one unit so a wrapped row never splits
+      // them; the unit itself stays left-aligned at the head of the line.
+      item: { display: 'flex', flexWrap: 'wrap', gap: '2px 8px', alignItems: 'center', padding: '3px 0' },
+      identity: { display: 'flex', gap: '6px', alignItems: 'baseline', flexShrink: 0 },
       itemId: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'nowrap' },
-      itemMeta: { opacity: 0.6, fontSize: '12px' },
-      dim: { opacity: 0.45, fontSize: '12px' },
+      itemMeta: { opacity: 0.6, fontSize: '12px', whiteSpace: 'nowrap' },
+      dim: { opacity: 0.45, fontSize: '12px', whiteSpace: 'nowrap', flexShrink: 0 },
       primary: { alignSelf: 'flex-start', padding: '4px 12px', borderRadius: '6px', border: '1px solid rgba(127,127,127,0.5)', background: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer' },
     }
 
@@ -227,12 +233,24 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Whether the subscription tag applies to one model.
+     *
+     * Free models are excluded on purpose: they cost nothing whether or not a
+     * plan covers them, so "covered by a subscription" is noise on their row.
+     * The filter and the row tag both read this one function, so a filtered
+     * list never shows a row the tag contradicts.
+     */
+    function planCovered(model) {
+      return model.free !== true && (model.plans || []).length > 0
+    }
+
+    /**
      * One model row's filter decision: every active dimension must match
      * (capabilities are ANDed too). `plan` is a yes/no dimension — "is a
-     * subscription covering this model" — not a pick-one-of-N tier selector.
+     * subscription covering this paid model" — not a pick-one-of-N tier selector.
      */
     function matchesFilters(model, query, flags) {
-      if (flags.plan === true && (model.plans || []).length === 0) return false
+      if (flags.plan === true && !planCovered(model)) return false
       if (flags.free === true && model.free !== true) return false
       for (const tag of CAPABILITY_TAGS) {
         if (flags[tag] === true && (model.tags || []).indexOf(tag) === -1) return false
@@ -381,7 +399,7 @@ window.__ModuleLoader__.load({
           { style: styles.notice },
           `显示 ${visible.length} / ${models.length} 个模型`
           + (allowAdd ? `，已选 ${addable.length} 个待加入` : '')
-          + `。能力标签按目录事实推导；「套餐内」= 该模型被某个订阅套餐覆盖（请求从套餐额度扣费），没有这个标签就只能用余额（PAYG）。`,
+          + `。能力标签按目录事实推导；「套餐内」= 付费模型被某个订阅套餐覆盖（请求从套餐额度扣费）；免费模型不标注，没有这个标签的付费模型只能用余额（PAYG）。`,
         ),
         view.plansError !== undefined
           ? React.createElement('p', { style: styles.error }, `套餐表读取失败，「套餐内」标签与筛选本次不可用：${view.plansError}`)
@@ -401,16 +419,18 @@ window.__ModuleLoader__.load({
                   onChange: () => { togglePick(model.id) },
                 })
                 : React.createElement('span', { style: { width: '13px' } }, known[model.id] === true ? '✓' : ''),
-              React.createElement('code', { style: styles.itemId }, model.id),
-              React.createElement('span', { style: styles.itemMeta }, model.name && model.name !== model.id ? model.name : ''),
+              React.createElement(
+                'span',
+                { style: styles.identity },
+                React.createElement('code', { style: styles.itemId }, model.id),
+                React.createElement('span', { style: styles.itemMeta }, model.name && model.name !== model.id ? model.name : ''),
+              ),
               model.free === true ? React.createElement('span', { style: styles.capTag }, '免费') : null,
               (model.tags || []).map((tag) => React.createElement('span', { key: tag, style: styles.capTag }, tag)),
               // One boolean tag, never one badge per plan: the only question a
-              // row answers is "does a subscription cover this model", and the
-              // tier that happens to cover it is not the reader's business here.
-              (model.plans || []).length > 0
-                ? React.createElement('span', { style: styles.planTag }, '套餐内')
-                : null,
+              // row answers is "does a subscription cover this PAID model", and
+              // the tier that happens to cover it is not the reader's business.
+              planCovered(model) ? React.createElement('span', { style: styles.planTag }, '套餐内') : null,
               model.chatCapable === false ? React.createElement('span', { style: styles.dim }, '（非会话模型）') : null,
               known[model.id] === true ? React.createElement('span', { style: styles.dim }, '已在路由') : null,
             )),
