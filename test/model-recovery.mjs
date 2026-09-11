@@ -39,6 +39,38 @@ let emptyCodesError
 try { validateKenariConfig({ ...defaults, modelRetryableCodes: [] }) } catch (err) { emptyCodesError = err }
 check('an empty retryable-code list is rejected at write time', emptyCodesError !== undefined, String(emptyCodesError?.message))
 
+// ------------------------------------------------------- retry policy shape
+const { isRecoveryProvider, kenariRetryPolicy, sleepUnlessAborted } = await import('../lib/llm/retry.js')
+
+check('isRecoveryProvider matches configured routes only',
+  isRecoveryProvider('kenari', ['kenari', 'kenari-direct']) === true
+  && isRecoveryProvider('deepseek-official', ['kenari', 'kenari-direct']) === false)
+
+const policy = kenariRetryPolicy({ maxRetries: 5, delayMs: 5000 })
+check('policy retries 5 times in normal mode', policy.mode === 'normal' && policy.maxRetries === 5)
+// dsh 的退避是 initialDelay * 2^n 被 maxDelay 封顶：两者相等就退化成「每次等同样久」，
+// 这是「固定 5s」唯一能精确表达的写法，所以这两条断言是关键
+check('policy waits a flat 5s (initial === max kills the exponential, jitter off)',
+  policy.initialDelayMs === 5000 && policy.maxDelayMs === 5000 && policy.jitterRatio === 0,
+  `${policy.initialDelayMs}/${policy.maxDelayMs}/${policy.jitterRatio}`)
+
+let emptyPolicyError
+try { kenariRetryPolicy({ retryableCodes: [] }) } catch (err) { emptyPolicyError = err }
+check('an empty retryable-code list fails fast', emptyPolicyError !== undefined)
+
+const preAborted = new AbortController()
+preAborted.abort()
+check('sleepUnlessAborted returns false for an already-aborted signal',
+  (await sleepUnlessAborted(50, preAborted.signal)) === false)
+
+const midAborted = new AbortController()
+setTimeout(() => midAborted.abort(), 20)
+check('sleepUnlessAborted returns false when aborted mid-wait',
+  (await sleepUnlessAborted(5000, midAborted.signal)) === false)
+
+check('sleepUnlessAborted returns true after the full wait',
+  (await sleepUnlessAborted(10, new AbortController().signal)) === true)
+
 const failed = results.filter((row) => !row.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 if (failed.length > 0) console.log('FAILED:', failed.map((row) => row.name).join(' | '))
