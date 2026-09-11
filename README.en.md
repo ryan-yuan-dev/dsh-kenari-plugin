@@ -331,12 +331,12 @@ Design and measurement notes live under `docs/` (`plans/` for designs and implem
 
 ## How this was built
 
-The plugin was written in **ZCode**, with session models from opencode's DeepSeek V4.1 Flash and Kenari's `deepseek-v4-flash`. Building it meant reading dsh's source repeatedly and editing across files. Both models hold a long context, and Kenari bills per use, so trial and error costs less than a monthly commitment.
+The plugin was written in **ZCode**, with session models from opencode's DeepSeek V4.1 Flash and Kenari's `deepseek-v4-flash`. Building it meant reading dsh's source repeatedly and editing across files. Both models hold a long context, and Kenari's pay-as-you-go billing keeps the cost of trial and error low.
 
 If you want a similar setup, these are the two I actually use:
 
-- **[Kenari](https://kenari.id/code/KNR-KKRNAJ)**. One key reaches models from several vendors. The catalog lists 80, from DeepSeek, GLM and GPT through speech, image, video, OCR, embeddings and rerank. It speaks OpenAI-compatible, Anthropic-compatible and Responses, so an existing client needs only a new base URL. Billing is per use in Rupiah with a low top-up minimum (QRIS from Rp 1,000). The catalog and docs endpoints are public, so you can see what you get before paying.
-- **[opencode Go](https://opencode.ai/go?ref=343F5JW4RA)**. $10 a month with quota per 5 hour window instead of per-token billing, and you can top up credit when the quota runs short. It works with any agent, which is why it runs the dsh session model here. Coding sessions make many small requests, so a flat monthly price is easier to predict.
+- **[Kenari](https://kenari.id/code/KNR-KKRNAJ)**: One key reaches models from several vendors. The catalog lists 80, from DeepSeek, GLM and GPT through speech, image, video, OCR, embeddings and rerank. It speaks OpenAI-compatible, Anthropic-compatible and Responses, so an existing client needs only a new base URL. Billing comes both per use and as a monthly plan, in Rupiah, with a low top-up minimum (QRIS from Rp 1,000). The catalog and docs endpoints are public, so you can see what you get before paying.
+- **[opencode Go](https://opencode.ai/go?ref=343F5JW4RA)**: $10 a month with quota per 5 hour window instead of per-token billing, and you can top up credit when the quota runs short. It works with any agent, which is why it runs the dsh session model here. Coding sessions make many small requests, so a flat monthly price is easier to predict.
 
 ## License
 
