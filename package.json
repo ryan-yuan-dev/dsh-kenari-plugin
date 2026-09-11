@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "description": "Kenari (kenari.id) as a first-class citizen of DeepSeek Harness: session models, web search/fetch provider with fallback, and REST capability tools.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ryan-yuan-dev/dsh-kenari-plugin.git"
+  },
+  "homepage": "https://github.com/ryan-yuan-dev/dsh-kenari-plugin#readme",
+  "bugs": {
+    "url": "https://github.com/ryan-yuan-dev/dsh-kenari-plugin/issues"
+  },
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -20,7 +28,8 @@
     "client",
     "assets",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "README.en.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/check-client.mjs",

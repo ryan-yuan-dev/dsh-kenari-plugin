@@ -4,7 +4,7 @@
 
 `dsh-kenari-plugin` —— DeepSeek Harness（dsh）bundle 插件，让 Kenari（kenari.id）成为 dsh 的一等公民：模型可作会话模型、REST 能力成为 agent 工具、默认 web 不可用时回退到 Kenari。
 
-**当前状态：第 0、1、2 期已完成并验证。** 骨架与 patch 层、web fallback（Kenari 优先 + 兜底）、20 个 `kenari_*` REST 工具均已就绪并装进 web profile。
+**当前状态：第 0–7 期已完成并验证。** 骨架与 patch 层、web fallback（Kenari 优先 + 兜底）、21 个 `kenari_*` REST 工具、模型目录视图与默认路由、模型调用失败自动恢复、会话标题时间前缀、设置页均已就绪并装进 web profile；第 5 期（自带 LlmAdapter，`nativeAdapterEnabled`）已实现、默认关闭。
 
 ## 最高纪律
 
