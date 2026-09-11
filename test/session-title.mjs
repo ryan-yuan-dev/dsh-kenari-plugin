@@ -42,9 +42,10 @@ function makeRig() {
         createdAt,
         ...(options.parentSession === undefined ? {} : { parentSession: options.parentSession }),
       },
+      inheritedEventCount: options.inheritedEventCount ?? 0,
       snapshotEvents: () => events,
-      append: (type, data) => {
-        const event = { type, seq: events.length, data }
+      append: (type, data, time) => {
+        const event = { type, seq: events.length, time: time ?? Date.now(), data }
         events.push(event)
         emit('session/event', handle, event)
       },
@@ -57,6 +58,7 @@ function makeRig() {
 }
 
 const titleData = (title, source = { kind: 'fallback' }, messageSeqs = [3]) => ({ title, messageSeqs, source })
+const humanMessage = (text = 'hi') => ({ source: { kind: 'user' }, content: [{ type: 'text', text }] })
 const latestTitle = (session) => session.snapshotEvents().findLast((event) => event.type === 'session/title')?.data
 const titleEvents = (session) => session.snapshotEvents().filter((event) => event.type === 'session/title')
 
@@ -130,6 +132,91 @@ check('非正整数预算 → 拒绝', !accepts({ ...base, maxBytes: 0 }))
   session.append('user/message', {})
   await tick()
   check('非标题事件不触发改写', titleEvents(session).length === before)
+}
+
+// ---------------------------------------------------------------------------
+// 3b) 时间锚点：用本会话第一条人类消息的时间，而不是记录创建时间
+// ---------------------------------------------------------------------------
+{
+  const rig = makeRig()
+  installSessionTitlePrefix(rig.ctx, {
+    enabled: () => true,
+    template: () => 'yyyyMMddHHmmss-',
+    maxBytes: () => 96,
+  })
+
+  // 真实场景：记录在 14:49 由工作区启动建好，真正开口说话在 17:42
+  const recordCreated = new Date(2026, 8, 11, 14, 49, 33).getTime()
+  const firstPrompt = new Date(2026, 8, 11, 17, 42, 58).getTime()
+  const session = rig.session('a1', recordCreated)
+  session.append('user/message', humanMessage(), firstPrompt)
+  session.append('session/title', titleData('kenari 模型价格'))
+  await tick()
+  check('前缀用第一条人类消息的时间，而不是记录创建时间',
+    latestTitle(session)?.title === '20260911174258-kenari 模型价格', latestTitle(session)?.title)
+
+  // 注入类的 user/message（agent-instructions / plugin / skill-catalog）不算锚点
+  const injected = rig.session('a2', recordCreated)
+  injected.append('user/message', { source: { kind: 'plugin' }, content: [] }, recordCreated)
+  injected.append('user/message', humanMessage(), firstPrompt)
+  injected.append('session/title', titleData('later prompt'))
+  await tick()
+  check('非人类 user/message 不参与锚点',
+    latestTitle(injected)?.title === '20260911174258-later prompt', latestTitle(injected)?.title)
+
+  // 没有任何人类消息时（对空会话手动改名）退回记录创建时间
+  const empty = rig.session('a3', recordCreated)
+  empty.append('session/title', titleData('manual name', { kind: 'user' }, []))
+  await tick()
+  check('无人类消息时退回记录创建时间',
+    latestTitle(empty)?.title === '20260911144933-manual name', latestTitle(empty)?.title)
+}
+
+// ---------------------------------------------------------------------------
+// 3c) 历史前缀修复：resume 时把按 createdAt 写错的前缀换成正确锚点
+// ---------------------------------------------------------------------------
+{
+  const rig = makeRig()
+  installSessionTitlePrefix(rig.ctx, {
+    enabled: () => true,
+    template: () => 'yyyyMMddHHmmss-',
+    maxBytes: () => 96,
+  })
+  const recordCreated = new Date(2026, 8, 11, 14, 49, 33).getTime()
+  const firstPrompt = new Date(2026, 8, 11, 17, 42, 58).getTime()
+
+  const legacy = rig.session('r2', recordCreated, {
+    seed: [
+      { type: 'user/message', seq: 0, time: firstPrompt, data: humanMessage() },
+      { type: 'session/title', seq: 1, time: firstPrompt, data: titleData('20260911144933-kenari 模型价格') },
+    ],
+  })
+  rig.emit('session/created', legacy)
+  await tick()
+  check('resume 把历史错误的 createdAt 前缀修正为第一条消息时间',
+    latestTitle(legacy)?.title === '20260911174258-kenari 模型价格', latestTitle(legacy)?.title)
+
+  // 已经按锚点写对的前缀：resume 时不动
+  const correct = rig.session('r3', recordCreated, {
+    seed: [
+      { type: 'user/message', seq: 0, time: firstPrompt, data: humanMessage() },
+      { type: 'session/title', seq: 1, time: firstPrompt, data: titleData('20260911174258-kenari 模型价格') },
+    ],
+  })
+  rig.emit('session/created', correct)
+  await tick()
+  check('已正确的前缀不回溯', titleEvents(correct).length === 1, `events=${titleEvents(correct).length}`)
+
+  // 原本没有前缀（开关曾关着）：不追溯补，守住「不回溯」
+  const plain = rig.session('r4', recordCreated, {
+    seed: [
+      { type: 'user/message', seq: 0, time: firstPrompt, data: humanMessage() },
+      { type: 'session/title', seq: 1, time: firstPrompt, data: titleData('plain name') },
+    ],
+  })
+  rig.emit('session/created', plain)
+  await tick()
+  check('原本没有前缀的历史标题不追溯补前缀', titleEvents(plain).length === 1, `events=${titleEvents(plain).length}`)
 }
 
 // ---------------------------------------------------------------------------

@@ -229,6 +229,8 @@ stdio 桥接会**刻意移除**名字像凭据的环境变量与所有 `DSH_*` �
 
 **append 重入**：`session/event` 在 append 的发布窗口内**同步**派发（`core/session/src/index.ts:745`），此时 `entry.appending === true`，回调里再 `session.append` 会抛 `session append cannot reenter while another append is being published`（同文件 `:723`）。改写标题必须 `queueMicrotask` defer，并在执行时重读最新 folded title，否则会覆盖更新的标题。
 
-**fork 的坑**：浏览器 fork 之后会显式调 host 的 `rename`，写入 `increasedForkTitle(父标题)`（`api/session-controller/src/client/sessions/service.ts:437`、`:156`），这次 rename 在 host 上 `source.kind === 'user'`。所以按 source 区分「用户改名不加前缀」会在 fork 上漏改前缀；统一按「剥旧前缀 + 按本会话 `createdAt` 重加」处理才对。fork 子会话继承的父标题事件**不会**触发 `session/event`（seed 由构造器写入），只能靠 `session/created` 补一次改写；普通 resume 要跳过，否则等于回溯已有会话。
+**fork 的坑**：浏览器 fork 之后会显式调 host 的 `rename`，写入 `increasedForkTitle(父标题)`（`api/session-controller/src/client/sessions/service.ts:437`、`:156`），这次 rename 在 host 上 `source.kind === 'user'`。所以按 source 区分「用户改名不加前缀」会在 fork 上漏改前缀；统一按「剥旧前缀 + 按本会话开始时间重加」处理才对。fork 子会话继承的父标题事件**不会**触发 `session/event`（seed 由构造器写入），只能靠 `session/created` 补一次改写；普通 resume 要跳过，否则等于回溯已有会话。
 
-**时间与长度**：`session.header.createdAt`（epoch 毫秒）是会话创建时间，fork 子会话拿到的是自己的创建时间；`maxTitleBytes` 只约束 dsh 自己的写入路径，插件直接 append 的事件要自己截断 —— 两处上限需人工同步。
+**`header.createdAt` 不是「会话开始时间」（踩过的坑）**：Web 侧会**复用空白会话**（`SessionSummary.blank`：New Session 复用同一 workspace 的空白记录），所以 `header.createdAt` 可能是工作区打开时的时间，比用户第一条消息早几个小时。实测一例：`createdAt` 14:49:33，第一条人类 `user/message` 在 17:42:58，差 173 分钟。取「会话开始时间」必须扫日志里第一条 `type === 'user/message' && data.source.kind === 'user'` 的事件（`source.kind` 还有 `agent-instructions` / `plugin` / `skill-catalog` 等注入来源，不算）；fork 子会话要跳过 seed 继承的前导事件 —— `session.inheritedEventCount` 是**持久的 fork 切点**（resume 时保持原值），从它开始扫才是子会话自己的第一条消息。没有任何人类消息时才退回 `header.createdAt`。
+
+**时间与长度**：`inheritedEventCount` / `firstLiveSeq` 的区别见 `core/session/src/index.ts:466`、`:476` —— 前者是持久 fork 切点，后者是本次进程内构造 seed 的长度。`maxTitleBytes` 只约束 dsh 自己的写入路径，插件直接 append 的事件要自己截断 —— 两处上限需人工同步。
