@@ -153,6 +153,142 @@ const partial = await new ModelCandidates({ llm: partialDirectory, cacheTtlMs: 6
 check('skips models whose metadata cannot be resolved',
   partial?.model === 'huge', String(partial?.model))
 
+// ------------------------------------------------------- escalation machine
+const { Context } = await import('@deepseek-ai/cordis')
+const { agentEvents } = await import('@deepseek-ai/dsh-agent')
+const { installModelRecovery } = await import('../lib/llm/recovery.js')
+
+/** 只实现恢复逻辑真正触碰到的面：requestContext / id / inject。 */
+const makeSession = (id) => {
+  const state = { current: undefined }
+  return { id, state, requestContext: () => state.current }
+}
+const makeAgent = (session) => ({
+  id: session.id,
+  session,
+  injected: [],
+  inject(message) { this.injected.push(message) },
+})
+
+const signal = () => new AbortController().signal
+const BASE_DEPS = {
+  enabled: true,
+  providers: ['kenari'],
+  switchEnabled: true,
+  switchDelayMs: 5,
+  skipCodes: ['AUTH', 'INVALID_CREDENTIAL', 'MISSING_CREDENTIAL', 'QUOTA'],
+  noticeEnabled: true,
+  defaultSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-flash' }),
+}
+
+/** 建一个装好恢复机制的 ctx 与它驱动的 agent。seed 带 reasoningEffort，用来验证跨模型时会被丢掉。 */
+const withRecovery = (overrides = {}) => {
+  const ctx = new Context()
+  const candidates = new ModelCandidates({ llm: makeDirectory(), cacheTtlMs: 60_000 })
+  installModelRecovery(ctx, { ...BASE_DEPS, candidates, ...overrides })
+  const session = makeSession('s1')
+  session.state.current = { provider: 'kenari', model: 'current', contextWindow: 8192 }
+  const agent = makeAgent(session)
+  const dispatch = agentEvents(ctx, agent)
+  const requestError = (failure, step = 1) => dispatch.waterfall(
+    'agent/request-error',
+    { turn: 1, step, provider: 'kenari', failure, retryPolicy: undefined, signal: signal() },
+    () => Promise.resolve(undefined),
+  )
+  const request = () => dispatch.waterfall(
+    'agent/request',
+    { turn: 1, step: 1, signal: signal() },
+    () => Promise.resolve({ provider: 'kenari', model: 'current', reasoningEffort: 'high' }),
+  )
+  return { ctx, agent, session, request, requestError }
+}
+
+// 没有失败时不该动请求配置，连档位都要原样透传
+const happy = withRecovery()
+const untouched = await happy.request()
+check('leaves the request alone before any failure',
+  untouched.provider === 'kenari' && untouched.model === 'current' && untouched.reasoningEffort === 'high',
+  `${untouched.provider}/${untouched.model}/${untouched.reasoningEffort}`)
+
+// 第一次失败 → 同 provider 换模型
+const first = withRecovery()
+const action1 = await first.requestError({ message: 'boom', code: 'SERVER' })
+check('first failure schedules a retry', action1?.kind === 'retry', JSON.stringify(action1))
+const afterFirst = await first.request()
+check('first escalation switches to the smallest sufficient model',
+  afterFirst.provider === 'kenari' && afterFirst.model === 'big', `${afterFirst.provider}/${afterFirst.model}`)
+check('the switch drops the previous reasoning effort', afterFirst.reasoningEffort === undefined)
+check('a model-switch notice is injected once', first.agent.injected.length === 1, String(first.agent.injected.length))
+check('the notice names both routes',
+  String(first.agent.injected[0]?.content?.[0]?.text).includes('kenari/current')
+  && String(first.agent.injected[0]?.content?.[0]?.text).includes('kenari/big'),
+  String(first.agent.injected[0]?.content?.[0]?.text))
+
+// 第二次失败 → 回退默认 provider（此刻当前路由已经是换过去的 big）
+first.session.state.current = { provider: 'kenari', model: 'big', contextWindow: 262144 }
+const action2 = await first.requestError({ message: 'boom', code: 'SERVER' })
+check('second failure schedules another retry', action2?.kind === 'retry')
+const afterSecond = await first.request()
+check('second escalation falls back to the default provider',
+  afterSecond.provider === 'deepseek-official' && afterSecond.model === 'deepseek-flash',
+  `${afterSecond.provider}/${afterSecond.model}`)
+
+// 第三次失败 → 放弃，该轮按现状以 error 结束
+first.session.state.current = { provider: 'deepseek-official', model: 'deepseek-flash', contextWindow: 65536 }
+const action3 = await first.requestError({ message: 'boom', code: 'SERVER' })
+check('third failure gives up (no infinite escalation)', action3 === undefined, JSON.stringify(action3))
+
+// 凭据类失败跳过「同 provider 换模型」：同账号的 key 坏了，换个模型没用
+const credential = withRecovery()
+const actionCredential = await credential.requestError({ message: 'bad key', code: 'AUTH' })
+check('a credential-class code still schedules a retry', actionCredential?.kind === 'retry')
+const afterCredential = await credential.request()
+check('...but goes straight to the default provider, skipping the same-provider switch',
+  afterCredential.provider === 'deepseek-official' && afterCredential.model === 'deepseek-flash',
+  `${afterCredential.provider}/${afterCredential.model}`)
+
+// 范围外 provider 完全不介入
+const foreign = withRecovery()
+const foreignDispatch = agentEvents(foreign.ctx, makeAgent(makeSession('s9')))
+const foreignResult = await foreignDispatch.waterfall(
+  'agent/request-error',
+  { turn: 1, step: 1, provider: 'deepseek-official', failure: { message: 'x', code: 'SERVER' }, retryPolicy: undefined, signal: signal() },
+  () => Promise.resolve(undefined),
+)
+check('a provider outside the recovery scope is left alone', foreignResult === undefined)
+
+// 总开关关掉时监听器完全不装
+const disabled = withRecovery({ enabled: false })
+const disabledAction = await disabled.requestError({ message: 'boom', code: 'SERVER' })
+check('the master switch disables recovery entirely', disabledAction === undefined)
+
+// 换模型关掉时只保留 dsh 的重试
+const retryOnly = withRecovery({ switchEnabled: false })
+const retryOnlyAction = await retryOnly.requestError({ message: 'boom', code: 'SERVER' })
+check('switchEnabled: false leaves recovery to dsh retries only', retryOnlyAction === undefined)
+
+// 顺序回归：installModelSelection 会用「本 step 组装时捕获的」原模型回写。
+// 它注册得更晚因而在内层；我们的 prepend 让我们拿到最终决定权。
+const ordering = withRecovery()
+const assembled = { provider: 'kenari', model: 'current' }
+ordering.ctx.on('agent/request', async (_payload, next) => {
+  const resolved = await next()
+  return { ...resolved, provider: assembled.provider, model: assembled.model }
+})
+await ordering.requestError({ message: 'boom', code: 'SERVER' })
+const ordered = await ordering.request()
+check('our override survives an inner listener that rewrites the model back',
+  ordered.provider === 'kenari' && ordered.model === 'big', `${ordered.provider}/${ordered.model}`)
+
+// 用户显式选模型（会话日志追加 model/selection）后，人的选择优先
+const manual = withRecovery()
+await manual.requestError({ message: 'boom', code: 'SERVER' })
+manual.ctx.emit('session/event', manual.session, { type: 'model/selection', seq: 1 })
+const afterManual = await manual.request()
+check('a manual model selection clears the override',
+  afterManual.provider === 'kenari' && afterManual.model === 'current',
+  `${afterManual.provider}/${afterManual.model}`)
+
 const failed = results.filter((row) => !row.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
 if (failed.length > 0) console.log('FAILED:', failed.map((row) => row.name).join(' | '))
