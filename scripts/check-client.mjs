@@ -390,7 +390,7 @@ check(
       if (selector === 'input') return idInputsWith(row.ids())
       return []
     },
-    querySelector: () => row.fold,
+    querySelector: (selector) => (typeof row.querySelector === 'function' ? row.querySelector(selector) : row.fold),
   })
   const nativeFor = (row) => ({
     closest: (selector) => {
@@ -440,15 +440,29 @@ check(
     `clicks=${hopeless.clicks.length} open=${hopeless.fold.open}`,
   )
 
-  // The write is not allowed to end with the card closed either: the user opened
-  // this picker from an expanded card, so a stale list is still better shown than
-  // hidden. `fold: null` is how a collapsed card reads here.
-  const collapsed = { clicks: [], closestCalls: 0, fold: null, ids: () => ['glm-5-3-flash'] }
-  const reopened = await internals.refreshProviderEditor(nativeFor(collapsed), ['agnes-2-0-flash:free'])
+  // A card that was open when the work began must not be left collapsed, but a
+  // user who collapses it while the write is in flight asked for it closed: the
+  // re-open is fenced on how the card started, not on the mess the budget left.
+  const abandoned = {
+    clicks: [],
+    closestCalls: 0,
+    fold: { open: false },
+    ids: () => ['glm-5-3-flash'],
+    // mounted when the write begins, gone by the time the attempts run out
+    querySelector: () => (abandoned.clicks.length >= 16 ? null : abandoned.fold),
+  }
+  const reopened = await internals.refreshProviderEditor(nativeFor(abandoned), ['agnes-2-0-flash:free'])
   check(
     'a card the last attempt left closed is re-opened, not abandoned',
-    reopened === false && collapsed.clicks.length === 17,
-    `clicks=${collapsed.clicks.length}`,
+    reopened === false && abandoned.clicks.length === 17,
+    `clicks=${abandoned.clicks.length}`,
+  )
+  const leftAlone = { clicks: [], closestCalls: 0, fold: null, ids: () => ['glm-5-3-flash'] }
+  const untouched = await internals.refreshProviderEditor(nativeFor(leftAlone), ['agnes-2-0-flash:free'])
+  check(
+    'a card that was already closed is left closed',
+    untouched === false && leftAlone.clicks.length === 16,
+    `clicks=${leftAlone.clicks.length}`,
   )
 
   // dsh renders 自定义设置 closed and keeps the model list inside it, so a card
@@ -499,6 +513,45 @@ check(
     && internals.MODEL_ID_LABELS.indexOf('模型 ID') !== -1
     && internals.MODEL_ID_LABELS.indexOf('Model ID') !== -1
     && internals.cardModelIds(rowWith(steady)).join(',') === 'glm-5-3-flash,agnes-2-0-flash:free',
+  )
+}
+
+// The per-row removal button is an icon: it carries an aria-label and no text at
+// all, so it is the one takeover that cannot be matched on the button's words.
+// The row it names is counted from the card's own removal buttons, which dsh
+// renders one per row in row order — the same order `cardModelIds` reads, so a
+// click and the id it deletes can never disagree about which row is which.
+{
+  const removalButton = (index) => ({ textContent: '', getAttribute: () => `删除模型 ${index}` })
+  const nameField = { textContent: '', getAttribute: () => '显示名称 1' }
+  const first = removalButton(1)
+  const second = removalButton(2)
+  const third = removalButton(3)
+  const buttons = [nameField, first, nameField, second, third]
+  const card = { querySelectorAll: () => buttons }
+  check(
+    'the removal label is matched in both locales, and only with its row number',
+    internals.REMOVE_LABELS.length === 2
+    && internals.isRemoveLabel('删除模型 1') === true
+    && internals.isRemoveLabel('Delete model 12') === true
+    && internals.isRemoveLabel('删除模型') === false
+    && internals.isRemoveLabel('模型 ID 1') === false
+    && internals.isRemoveLabel('') === false,
+  )
+  check(
+    'a removal click names its row by counting the card removal buttons',
+    internals.removalRowOf(first, card) === 0
+    && internals.removalRowOf(second, card) === 1
+    && internals.removalRowOf(third, card) === 2
+    && internals.removalRowOf(nameField, card) === -1
+    && internals.removalRowOf(removalButton(1), card) === -1
+    && internals.removalRowOf(first, null) === -1,
+  )
+  check(
+    'the written list drops exactly that id and keeps the order',
+    internals.withoutModel([{ id: 'a' }, { id: 'b' }, { id: 'c' }], 'b').map((m) => m.id).join(',') === 'a,c'
+    && internals.withoutModel([{ id: 'a' }], 'zz').length === 1
+    && internals.withoutModel([{ id: 'b' }, { id: 'b' }], 'b').length === 0,
   )
 }
 

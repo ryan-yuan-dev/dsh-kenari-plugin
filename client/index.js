@@ -384,6 +384,18 @@ window.__ModuleLoader__.load({
     const MODEL_ID_LABELS = ['模型 ID', 'Model ID']
 
     /**
+     * dsh's per-row removal button, in the locales this build ships.
+     *
+     * Unlike every other label this bundle matches, this one has NO text: the
+     * button is an icon, so its aria-label (`${removeModel} ${index + 1}`) is the
+     * only identity it has.
+     */
+    const REMOVE_LABELS = ['删除模型', 'Delete model']
+
+    /** The route this plugin owns, as the Models page and the marker seat name it. */
+    const KENARI_PROVIDER = 'kenari'
+
+    /**
      * How many collapse/expand attempts the remount gets, and how long each
      * waits for the page to paint, in milliseconds. The card is re-seeded from
      * the Models page's own settings snapshot, which React re-renders
@@ -393,6 +405,13 @@ window.__ModuleLoader__.load({
      */
     const REFRESH_ATTEMPTS = 8
     const REFRESH_RETRY_MS = 60
+
+    /**
+     * How long a burst of row deletions is collected before it is written, in
+     * milliseconds. Long enough to swallow a run of clicks on adjacent rows, short
+     * enough that a single deletion still looks immediate.
+     */
+    const REMOVAL_DEBOUNCE_MS = 120
 
     /**
      * Whether a button's label (already trimmed) belongs to this takeover. An
@@ -956,7 +975,10 @@ window.__ModuleLoader__.load({
      * gates (adding while the editor is busy, fetching without a base URL) hold
      * here too without this function re-reading any of them.
      */
-    function installEntryTakeover() {
+    function installEntryTakeover(hooks) {
+      const onRemove = hooks !== null && hooks !== undefined && typeof hooks.onRemove === 'function'
+        ? hooks.onRemove
+        : null
       const onClickCapture = (event) => {
         if (takeoverBypassed || !pickerChannel.mounted) return
         const target = event.target
@@ -971,8 +993,24 @@ window.__ModuleLoader__.load({
           if (cardWithMarker(button) !== null) void revealEditorFoldSoon()
           return
         }
+        // dsh's per-row removal, taken over the same way 添加模型 is — but here the
+        // click is deliberately NOT prevented, because the card has to drop the row
+        // itself for the click to look immediate. What this adds is the write: the
+        // stored route loses the model now instead of at 保存, so a deletion lands
+        // exactly like an addition does, and the draft that dsh just edited is
+        // re-seeded from the document a moment later.
+        const card = cardWithMarker(button)
+        if (card !== null && onRemove !== null) {
+          const removalRow = removalRowOf(button, card)
+          if (removalRow !== -1) {
+            const shown = cardModelIds(card)
+            const removed = shown === null ? undefined : shown[removalRow]
+            if (typeof removed === 'string' && removed.length > 0) onRemove(card, removed)
+            return
+          }
+        }
         if (!isTakeoverLabel(label)) return
-        if (cardWithMarker(button) === null) return
+        if (card === null) return
         event.preventDefault()
         event.stopPropagation()
         pickerChannel.open(button)
@@ -981,6 +1019,68 @@ window.__ModuleLoader__.load({
       return () => {
         document.removeEventListener('click', onClickCapture, true)
       }
+    }
+
+    /** A node's aria-label, or '' when it has none. */
+    function ariaLabelOf(node) {
+      if (node === null || node === undefined || typeof node.getAttribute !== 'function') return ''
+      const label = node.getAttribute('aria-label')
+      return typeof label === 'string' ? label : ''
+    }
+
+    /** Whether an already-read aria-label is one of dsh's per-row removal buttons. */
+    function isRemoveLabel(label) {
+      for (let at = 0; at < REMOVE_LABELS.length; at += 1) {
+        if (label.indexOf(`${REMOVE_LABELS[at]} `) === 0) return true
+      }
+      return false
+    }
+
+    /**
+     * Which model row a removal button owns, or -1 when this click is not one of
+     * dsh's removal buttons.
+     *
+     * Counted from the card's own removal buttons, which `ModelListEditor` renders
+     * one per row in row order — the order {@link cardModelIds} reads, so the two
+     * indexes name the same row. Counting beats parsing the trailing number out of
+     * the aria-label: the label's own numbering would be another dsh detail to
+     * track, while the DOM here is already the source of the rows.
+     * @param button - the clicked button.
+     * @param card - the provider's card element.
+     * @returns the row index, or -1.
+     */
+    function removalRowOf(button, card) {
+      if (!isRemoveLabel(ariaLabelOf(button))) return -1
+      if (card === null || card === undefined || typeof card.querySelectorAll !== 'function') return -1
+      const buttons = card.querySelectorAll('button')
+      if (buttons === null || buttons === undefined || typeof buttons.length !== 'number') return -1
+      let index = 0
+      for (let at = 0; at < buttons.length; at += 1) {
+        const node = buttons[at]
+        if (node === button) return index
+        if (isRemoveLabel(ariaLabelOf(node))) index += 1
+      }
+      return -1
+    }
+
+    /**
+     * The list left after dropping one model id, in order.
+     *
+     * Filters by id rather than by index: the row the user clicked is named by
+     * what that row shows, and a stored array whose order drifted must not make
+     * the click delete its neighbour.
+     * @param models - the stored model entries.
+     * @param id - the id to drop.
+     * @returns a new list without it.
+     */
+    function withoutModel(models, id) {
+      const kept = []
+      for (let at = 0; at < models.length; at += 1) {
+        const model = models[at]
+        if (model !== null && model !== undefined && model.id === id) continue
+        kept.push(model)
+      }
+      return kept
     }
 
     /**
@@ -1128,10 +1228,14 @@ window.__ModuleLoader__.load({
      * on the same toggle (the card is only ever closed by one), and the fold is
      * re-opened because the remount re-creates it closed.
      * @param row - the provider's list item.
+     * @param wasOpen - whether the editor was mounted when the work began.
      * @returns settlement after the card has been re-opened.
      */
-    async function leaveEditorOpen(row) {
-      if (!editorMounted(row)) {
+    async function leaveEditorOpen(row, wasOpen) {
+      // Only a card that was open to begin with is restored: a user who collapsed
+      // it while the write was in flight asked for it closed, and a deletion must
+      // not fight that the way a dialog's own success may override a stale draft.
+      if (wasOpen && !editorMounted(row)) {
         const toggle = editToggleOf(row)
         if (toggle !== null && typeof toggle.click === 'function') {
           toggle.click()
@@ -1164,8 +1268,8 @@ window.__ModuleLoader__.load({
      *
      * Fail-open — no toggle found (a dsh release renamed it), or a list that never
      * agrees, returns false and the caller falls back to the copy that names the
-     * manual way. Either way the card is left open with its fold unfolded: the
-     * user came here from an expanded card, so a collapsed one would hide both
+     * manual way. Either way the card is left open with its fold unfolded, since
+     * the user came here from an expanded card — a collapsed one would hide both
      * the list and the copy talking about it.
      * @param button - the native button the takeover intercepted.
      * @param addedIds - the model ids the card's list must contain to count as refreshed.
@@ -1180,8 +1284,25 @@ window.__ModuleLoader__.load({
       // keys it by provider and only the editor inside it comes and goes.
       const row = button.closest('li')
       if (row === null || row === undefined) return false
-      let refreshed = false
-      for (let attempt = 0; attempt < REFRESH_ATTEMPTS && !refreshed; attempt += 1) {
+      return remountEditorWhile(row, (shown) => wanted.every((id) => shown.indexOf(id) !== -1))
+    }
+
+    /**
+     * Collapse and expand one card until its list agrees, then leave it as the
+     * user had it.
+     *
+     * The loop is shared by both writes this plugin makes to a route: an addition
+     * wants its ids to appear, a removal wants its id to be gone, and everything
+     * else — the pair of clicks, the paint between them, the budget, the row
+     * resolved once, the fold re-opened — is the same either way.
+     * @param row - the provider's list item.
+     * @param agrees - reads the ids the card now lists and answers whether the change is on screen.
+     * @returns whether the card ever agreed.
+     */
+    async function remountEditorWhile(row, agrees) {
+      const wasOpen = editorMounted(row)
+      let agreed = false
+      for (let attempt = 0; attempt < REFRESH_ATTEMPTS && !agreed; attempt += 1) {
         const toggle = editToggleOf(row)
         if (toggle === null || typeof toggle.click !== 'function') break
         toggle.click()
@@ -1195,10 +1316,10 @@ window.__ModuleLoader__.load({
         await afterPaint()
         const shown = cardModelIds(row)
         if (shown === null) break
-        refreshed = wanted.every((id) => shown.indexOf(id) !== -1)
+        agreed = agrees(shown)
       }
-      await leaveEditorOpen(row)
-      return refreshed
+      await leaveEditorOpen(row, wasOpen)
+      return agreed
     }
 
     /**
@@ -1709,7 +1830,7 @@ window.__ModuleLoader__.load({
       // picker is about Kenari, so another pi-ai route renders nothing — not
       // even the marker, which is what keeps the takeover from claiming that
       // route's otherwise identical button.
-      if (props.provider === undefined || props.provider.provider !== 'kenari') return null
+      if (props.provider === undefined || props.provider.provider !== KENARI_PROVIDER) return null
       return React.createElement(
         React.Fragment,
         null,
@@ -2211,6 +2332,69 @@ window.__ModuleLoader__.load({
           : { ok: false, message: t('catalog.writeRefused', { count: missing }) }
       }
 
+      /**
+       * Drop models from the route's stored array, right away.
+       *
+       * The deletion counterpart of {@link addModels}, and the reason a deletion
+       * does not need the card's 保存: the card's own removal only edits its draft,
+       * and a draft deletion is discarded the next time anything remounts the card
+       * — so a user who deleted a row and then added a model would watch the
+       * deleted row return. Writing here makes both paths land in the document,
+       * and both re-seed the card afterwards, which also refreshes the revision
+       * fence the card's next save is fenced on.
+       *
+       * Deletions in a burst are collected and written once. Each write is a
+       * read-modify-write of the whole array, so firing one per click would let
+       * two of them read the same document and fence the second on a revision its
+       * predecessor had already superseded — the second deletion would be refused
+       * and the row would come back. One write per burst has no such window, and
+       * costs one card refresh instead of one per row.
+       *
+       * Only the models path is written. A key, name or endpoint typed into the
+       * card and not yet saved is untouched — those still travel with dsh's own
+       * 保存.
+       */
+      const pendingRemovals = new Set()
+      let removalTimer = null
+      let removalTail = Promise.resolve()
+
+      const removeRouteModel = (card, modelId) => {
+        pendingRemovals.add(modelId)
+        if (removalTimer !== null) return
+        removalTimer = setTimeout(() => {
+          removalTimer = null
+          const ids = [...pendingRemovals]
+          pendingRemovals.clear()
+          const run = () => applyRemovals(card, ids)
+          removalTail = removalTail.then(run, run)
+        }, REMOVAL_DEBOUNCE_MS)
+      }
+
+      const applyRemovals = async (card, ids) => {
+        try {
+          const read = await readPiAi()
+          if (read.failure !== undefined || read.view === undefined) return
+          // A read-only deployment keeps dsh's own behaviour: the rows stay draft
+          // edits, and the card is left alone rather than remounted out from under it.
+          if (read.writable !== true) return
+          const existing = routeModelsOf(read.view, KENARI_PROVIDER)
+          let next = existing
+          for (let at = 0; at < ids.length; at += 1) next = withoutModel(next, ids[at])
+          // None of them was stored: the draft edits already said everything there
+          // is to say, so there is nothing to write and nothing to re-seed.
+          if (next.length === existing.length) return
+          await routeScope.mutate(
+            [{ op: 'set', path: ['providers', KENARI_PROVIDER, 'models'], value: next }],
+            read.view.revision,
+          )
+          await remountEditorWhile(card, (shown) => ids.every((id) => shown.indexOf(id) === -1))
+        } catch (_removalFailure) {
+          // Fail-open: the rows stay in the document, so the card's own list keeps
+          // showing them — the user sees the deletion did not take, rather than a
+          // silent success.
+        }
+      }
+
       const injected = () => ({ scope, loadModels, describeKey })
       ctx.slots.inject('settings.section', () =>
         ctx.slots.register(
@@ -2248,7 +2432,7 @@ window.__ModuleLoader__.load({
       // One document-level listener, torn down with this fiber. It is inert
       // until the Kenari card mounts, because a click only means anything when
       // this plugin's dialog can answer it.
-      ctx.effect(() => installEntryTakeover(), 'kenari: 模型目录入口接管')
+      ctx.effect(() => installEntryTakeover({ onRemove: removeRouteModel }), 'kenari: 模型目录入口接管')
       ensureDialogWidth()
 
       // The settings nav glyph. dsh picks its own by section id, so this is the
@@ -2267,6 +2451,10 @@ window.__ModuleLoader__.load({
       TAKEOVER_LABELS,
       EDIT_LABELS,
       MODEL_ID_LABELS,
+      REMOVE_LABELS,
+      isRemoveLabel,
+      removalRowOf,
+      withoutModel,
       refreshProviderEditor,
       cardModelIds,
       revealFoldOf,
