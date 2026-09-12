@@ -39,7 +39,9 @@
     "test:default-route": "node test/default-route.mjs",
     "test:view": "node test/catalog-view.mjs",
     "test:favicon": "node test/favicon.mjs",
-    "test:session-title": "node test/session-title.mjs"
+    "test:session-title": "node test/session-title.mjs",
+    "test:model-recovery": "node test/model-recovery.mjs",
+    "test:retry-repro": "node test/retry-repro.mjs"
   },
   "dsh": {
     "bundle": {

@@ -72,10 +72,16 @@
 # src/catalog.ts's `toModelProfile()` writes, so the preset and the computed
 # default produce identical entries for the same ids.
 #
-# Failure recovery: `retryPolicy` below must stay in sync with the plugin's
-# `modelRetryMaxRetries` / `modelRetryDelayMs` (which drive the kenari-direct
-# route). dsh captures a route's retry policy once, at adapter registration, and
-# freezes it — so the plugin cannot change this route's retry timing at runtime.
+# Failure recovery: retries on this route are owned by the plugin's own recovery
+# state machine (src/llm/recovery.ts), which restarts the step itself. `maxRetries:
+# 0` makes dsh's `llm-retry` a deliberate no-op here, so exactly one component owns
+# retrying and the behaviour stops depending on where `llm-retry` lands in the
+# `agent/request-error` waterfall — a live reload can re-register it behind the
+# plugin, and a listener that does not call `next()` vetoes everything after it.
+# Measured on a live session: zero `llm/retry` events and the model switch happened
+# on the first failure, i.e. the promised retries never ran. The budget now comes
+# from the plugin's `modelRetryMaxRetries` / `modelRetryDelayMs` /
+# `modelRetryableCodes`, which is one source of truth instead of two.
 # ---------------------------------------------------------------------------
 - id: llm-pi-ai
   config:
@@ -85,19 +91,9 @@
         apiKeyEnv: KENARI_API_KEY
         api: openai-completions
         baseURL: https://kenari.id/v1
-        # A flat 5s between retries: dsh's backoff is `initialDelay * 2^n` capped
-        # at `maxDelay`, so making the two equal (and disabling jitter) is the
-        # only way to express "wait 5s every time".
-        # CONTEXT_WINDOW_EXCEEDED is deliberately left out of the retryable set:
-        # retrying the same context on the same model can only fail again, and
-        # the plugin's escalation is the thing that can actually fix it.
         retryPolicy:
           mode: normal
-          maxRetries: 5
-          backoff:
-            initialDelayMs: 5000
-            maxDelayMs: 5000
-            jitterRatio: 0
+          maxRetries: 0
         compat:
           supportsDeveloperRole: false
           maxTokensField: max_tokens

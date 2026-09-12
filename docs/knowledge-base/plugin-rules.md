@@ -208,3 +208,19 @@ provider 的真实可用性因此在 `search()` / `fetch()` 调用时才暴露�
 **依据**：`ContentBlock` 的 `image`/`file` 只承载 `ImageAttachmentRef`/`FileAttachmentRef`，字节由 attachment 服务持有（硬约束源自 value 的 JSON 约束与 attachment 的所有权模型）。
 
 **失败模式**：把 base64 塞进 value → 会话日志爆炸或 schema 校验失败。
+
+---
+
+## 16. 瀑布事件里不调用 `next()` 会否决整条链
+
+`agent/request-error`、`agent/request`、`session/event`、`llm/stream` 这类 waterfall 事件**没有默认行为**：监听器按注册顺序从外层到内层串起来，谁不调用 `next()`，它后面（更内层）的监听器就永远不会被调用，包括 `dsh-llm-retry`、`compaction-basic` 这些 dsh 自带的策略。
+
+**要求**：
+
+1. 插件在 waterfall 上注册的监听器，除非**有意**否决整条链，否则必须先 `await next()`，再决定自己要不要介入；下游抛错记 `logger.warn` 后继续，而不是让恢复逻辑静默失效。
+2. 注册顺序由装载时刻决定，**插件读不到、也控制不了**。所以任何「另一个策略会替我做 X」的设计都必须附带一个**可观察的验证**（例如读会话里的事件、或者自己兜底），不能只靠顺序假设。
+3. 内层决定放弃的表现是返回 `undefined`，不是抛错；`{kind:'retry'}` 一类的决定要原样透传给调用方。
+
+**依据**：cordis 的 `waterfall` 是 `cbs.shift()` 串成的链（`vendor/cordis/src/events.ts:235-242`），注释原文「a listener that does not call `next()` vetoes the rest of the chain」。2026-09-13 的实例：插件把「5 次重试」外包给 `dsh-llm-retry`，而插件自己是个不调用 `next()` 的监听器；顺序一旦被 live reload 翻过来，llm-retry 就永久出局，8 个会话日志里 `llm/retry` 事件数为 0，承诺的重试从未执行（详见 `docs/handoff/004-*`）。
+
+**失败模式**：功能「静默消失」—— 没有报错、没有日志，只有行为悄悄退化。

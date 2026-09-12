@@ -31,7 +31,7 @@ import { KenariLlmAdapter } from './llm/adapter.js'
 import { ModelCandidates } from './llm/candidates.js'
 import { installModelRecovery } from './llm/recovery.js'
 import type { Target } from './llm/recovery.js'
-import { kenariRetryPolicy } from './llm/retry.js'
+import { dshRetryDisabledPolicy } from './llm/retry.js'
 import { installSessionTitlePrefix } from './session-title.js'
 import { registerDocsTools } from './tools/docs.js'
 import { registerAccountTools } from './tools/account.js'
@@ -82,12 +82,14 @@ export interface Config {
   modelRecoveryEnabled?: boolean
   /** 参与恢复的 provider 路由；范围外的路由行为完全不变。 */
   modelRecoveryProviders?: string[]
-  /** 首次请求之后的额外重试次数（kenari-direct 路由；llm-pi-ai 路由见 cordis.patch.yml）。 */
+  /** 首次请求之后的额外重试次数（两条 Kenari 路由都由插件自己的恢复状态机执行）。 */
   modelRetryMaxRetries?: number
-  /** 每次重试前的固定等待毫秒数（同上传导范围）。 */
+  /** 每次重试前的固定等待毫秒数。 */
   modelRetryDelayMs?: number
   /** 允许重试的失败码；不能为空。 */
   modelRetryableCodes?: string[]
+  /** 是否注入「正在本地重试」通知（重试期间界面没有别的痕迹）。 */
+  modelRetryNoticeEnabled?: boolean
   /** 是否允许换模型（关掉则只重试）。 */
   modelSwitchEnabled?: boolean
   /** 换模型/回退默认 provider 前的等待毫秒数。 */
@@ -129,6 +131,7 @@ export const Config: z<Config> = z.object({
   modelRetryableCodes: z.array(z.string()).default([
     'EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT',
   ]),
+  modelRetryNoticeEnabled: z.boolean().default(true),
   modelSwitchEnabled: z.boolean().default(true),
   modelSwitchDelayMs: z.number().step(1).min(0).default(5_000),
   modelSwitchSkipCodes: z.array(z.string()).default([
@@ -311,11 +314,8 @@ export function apply(ctx: Context, config: Config): void {
         catalog,
         billing,
         logger,
-        retryPolicy: kenariRetryPolicy({
-          maxRetries: liveConfig.modelRetryMaxRetries ?? 5,
-          delayMs: liveConfig.modelRetryDelayMs ?? 5_000,
-          retryableCodes: liveConfig.modelRetryableCodes,
-        }),
+        // 重试由恢复状态机自己做（见 ./llm/recovery.ts），dsh 自带的重试在这条路由上关掉
+        retryPolicy: dshRetryDisabledPolicy(),
       },
       (imageRef) => {
         const attachments = ctx.get('attachments')
@@ -356,6 +356,10 @@ export function apply(ctx: Context, config: Config): void {
       enabled: liveConfig.modelRecoveryEnabled ?? true,
       providers: liveConfig.modelRecoveryProviders ?? ['kenari', 'kenari-direct'],
       switchEnabled: liveConfig.modelSwitchEnabled ?? true,
+      retryMaxRetries: liveConfig.modelRetryMaxRetries ?? 5,
+      retryDelayMs: liveConfig.modelRetryDelayMs ?? 5_000,
+      retryCodes: liveConfig.modelRetryableCodes ?? [],
+      retryNoticeEnabled: liveConfig.modelRetryNoticeEnabled ?? true,
       switchDelayMs: liveConfig.modelSwitchDelayMs ?? 5_000,
       skipCodes: liveConfig.modelSwitchSkipCodes ?? [],
       noticeEnabled: liveConfig.modelSwitchNoticeEnabled ?? true,

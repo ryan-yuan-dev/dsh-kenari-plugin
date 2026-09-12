@@ -2,7 +2,8 @@
  * 「换一个上下文 >= 当前的模型」的候选挑选。
  *
  * 挑最小够用者而不是最大者：一次失败不值得把会话切到又贵又慢的最大上下文模型。
- * 阈值取**当前**模型的窗口，所以一次会话里窗口只会持平或变大，不会来回横跳。
+ * 阈值取**当前**模型的窗口，所以一次会话里窗口只会持平或变大；要防止的正是「持平」那种
+ * 情况下的来回横跳（两个同窗口模型互相切），所以调用方会把本 step 里失败过的路由传进来排除。
  * @module dsh-kenari-plugin/llm/candidates
  */
 
@@ -35,6 +36,8 @@ export interface PickInput {
   model: string
   contextWindow?: number
   signal?: AbortSignal
+  /** 额外排除的路由（`provider/model`），用于本 step 内已经失败过的那些 —— 不再回头。 */
+  exclude?: readonly string[]
 }
 
 /**
@@ -81,13 +84,14 @@ export class ModelCandidates {
   /** 找最小够用的候选；找不到返回 undefined。 */
   async pick(input: PickInput): Promise<CandidateModel | undefined> {
     const threshold = input.contextWindow ?? 0
+    const excluded = new Set(input.exclude ?? [])
 
-    const local = smallestAtLeast(await this.entriesOf(input.provider, input.signal), input.model, threshold)
+    const local = smallestAtLeast(await this.entriesOf(input.provider, input.signal), input.model, threshold, excluded)
     if (local !== undefined) return local
 
     for (const entry of this.deps.llm.listProviders()) {
       if (entry.id === input.provider) continue
-      const found = smallestAtLeast(await this.entriesOf(entry.id, input.signal), undefined, threshold)
+      const found = smallestAtLeast(await this.entriesOf(entry.id, input.signal), undefined, threshold, excluded)
       if (found !== undefined) return found
     }
     return undefined
@@ -95,17 +99,19 @@ export class ModelCandidates {
 }
 
 /**
- * 排除 `exclude`、取 `contextWindow >= threshold` 的最小者。
+ * 排除 `exclude` 这个模型、以及 `tried` 里的路由，取 `contextWindow >= threshold` 的最小者。
  * 同窗口时按 model id 字典序取小 —— 确定性很重要，否则同一份配置在不同机器上会换到不同模型。
  */
 function smallestAtLeast(
   entries: readonly CandidateModel[],
   exclude: string | undefined,
   threshold: number,
+  tried: ReadonlySet<string>,
 ): CandidateModel | undefined {
   let best: CandidateModel | undefined
   for (const entry of entries) {
     if (exclude !== undefined && entry.model === exclude) continue
+    if (tried.has(`${entry.provider}/${entry.model}`)) continue
     if (entry.contextWindow < threshold) continue
     if (best === undefined
       || entry.contextWindow < best.contextWindow

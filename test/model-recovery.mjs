@@ -1,8 +1,8 @@
 /**
- * 模型失败恢复的验证：路由判定、重试策略装配、候选挑选、升级状态机。
+ * 模型失败恢复的验证：路由判定、dsh 重试的关闭策略、候选挑选、升级状态机。
  *
- * 全程 in-process，无网络、无计费 —— 重试机制本身（dsh-llm-retry 的行为）属于 dsh
- * 的测试范围，这里只验证我们产出的策略形状与自己写的状态机。理由见设计文档 §7.d。
+ * 全程 in-process，无网络、无计费。跨进程的端到端行为（真实 llm-retry 在链上的位置与
+ * 重试次数）由 `test/retry-repro.mjs` 覆盖 —— 这里只验证本模块自己的状态机与策略形状。
  *
  * Run: pnpm build && node test/model-recovery.mjs
  */
@@ -39,24 +39,18 @@ let emptyCodesError
 try { validateKenariConfig({ ...defaults, modelRetryableCodes: [] }) } catch (err) { emptyCodesError = err }
 check('an empty retryable-code list is rejected at write time', emptyCodesError !== undefined, String(emptyCodesError?.message))
 
-// ------------------------------------------------------- retry policy shape
-const { isRecoveryProvider, kenariRetryPolicy, sleepUnlessAborted } = await import('../lib/llm/retry.js')
+// -------------------------------------------------- dsh retry hand-off shape
+const { isRecoveryProvider, dshRetryDisabledPolicy, sleepUnlessAborted } = await import('../lib/llm/retry.js')
 
 check('isRecoveryProvider matches configured routes only',
   isRecoveryProvider('kenari', ['kenari', 'kenari-direct']) === true
   && isRecoveryProvider('deepseek-official', ['kenari', 'kenari-direct']) === false)
 
-const policy = kenariRetryPolicy({ maxRetries: 5, delayMs: 5000 })
-check('policy retries 5 times in normal mode', policy.mode === 'normal' && policy.maxRetries === 5)
-// dsh 的退避是 initialDelay * 2^n 被 maxDelay 封顶：两者相等就退化成「每次等同样久」，
-// 这是「固定 5s」唯一能精确表达的写法，所以这两条断言是关键
-check('policy waits a flat 5s (initial === max kills the exponential, jitter off)',
-  policy.initialDelayMs === 5000 && policy.maxDelayMs === 5000 && policy.jitterRatio === 0,
-  `${policy.initialDelayMs}/${policy.maxDelayMs}/${policy.jitterRatio}`)
-
-let emptyPolicyError
-try { kenariRetryPolicy({ retryableCodes: [] }) } catch (err) { emptyPolicyError = err }
-check('an empty retryable-code list fails fast', emptyPolicyError !== undefined)
+// 重试归插件自己的状态机：dsh 在 Kenari 路由上必须一次都不重试，否则两条机制会各数一遍
+const dshNoRetry = dshRetryDisabledPolicy()
+check('dsh retry is a no-op on the kenari route',
+  dshNoRetry.mode === 'normal' && dshNoRetry.maxRetries === 0,
+  `${dshNoRetry.mode}/${dshNoRetry.maxRetries}`)
 
 const preAborted = new AbortController()
 preAborted.abort()
@@ -108,6 +102,13 @@ check('picks the smallest sufficient model in the same provider',
 const excluded = await candidates.pick({ provider: 'kenari', model: 'small', contextWindow: 4096 })
 check('never picks the model that just failed',
   excluded?.model === 'current', String(excluded?.model))
+
+// 本 step 里失败过的路由不再回头：两个同窗口模型（`>=` 判定）否则会来回横跳
+const notRepeating = await candidates.pick({
+  provider: 'kenari', model: 'current', contextWindow: 8192, exclude: ['kenari/current', 'kenari/big'],
+})
+check('routes already tried in this step are excluded from the candidates',
+  notRepeating?.model === 'huge', String(notRepeating?.model))
 
 check('reuses the cached directory within the TTL', directory.calls.listModels === 1, String(directory.calls.listModels))
 
@@ -175,6 +176,11 @@ const BASE_DEPS = {
   enabled: true,
   providers: ['kenari'],
   switchEnabled: true,
+  // 默认把重试预算设为 0，让下面这组测试专注于升级阶段本身；重试阶段单独测
+  retryMaxRetries: 0,
+  retryDelayMs: 5,
+  retryCodes: ['EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT'],
+  retryNoticeEnabled: true,
   switchDelayMs: 5,
   skipCodes: ['AUTH', 'INVALID_CREDENTIAL', 'MISSING_CREDENTIAL', 'QUOTA'],
   noticeEnabled: true,
@@ -262,23 +268,88 @@ const disabled = withRecovery({ enabled: false })
 const disabledAction = await disabled.requestError({ message: 'boom', code: 'SERVER' })
 check('the master switch disables recovery entirely', disabledAction === undefined)
 
-// 换模型关掉时只保留 dsh 的重试
-const retryOnly = withRecovery({ switchEnabled: false })
-const retryOnlyAction = await retryOnly.requestError({ message: 'boom', code: 'SERVER' })
-check('switchEnabled: false leaves recovery to dsh retries only', retryOnlyAction === undefined)
+// 换模型关掉时只剩重试：预算用尽前一直重试同一条路由，不再升级
+const retryOnly = withRecovery({ switchEnabled: false, retryMaxRetries: 1 })
+const retryOnlyFirst = await retryOnly.requestError({ message: 'boom', code: 'SERVER' })
+check('switchEnabled: false still retries the same route',
+  retryOnlyFirst?.kind === 'retry', JSON.stringify(retryOnlyFirst))
+const retryOnlySecond = await retryOnly.requestError({ message: 'boom', code: 'SERVER' })
+check('...and gives up once the retry budget is spent',
+  retryOnlySecond === undefined && (await retryOnly.request()).model === 'current')
 
-// 顺序回归：installModelSelection 会用「本 step 组装时捕获的」原模型回写。
-// 它注册得更晚因而在内层；我们的 prepend 让我们拿到最终决定权。
-const ordering = withRecovery()
-const assembled = { provider: 'kenari', model: 'current' }
-ordering.ctx.on('agent/request', async (_payload, next) => {
-  const resolved = await next()
-  return { ...resolved, provider: assembled.provider, model: assembled.model }
+// ------------------------------------------------------- retry stage (stage 0)
+// 重试由本模块自己做（dsh 在 Kenari 路由上已被关掉）：先在同一条路由上重试，
+// 预算用尽才换模型。链上已经排程过重试时让位，两条机制不各数一遍。
+const retrying = withRecovery({ retryMaxRetries: 2, retryDelayMs: 5 })
+const retryFirst = await retrying.requestError({ message: 'boom', code: 'SERVER' })
+check('a transient failure is retried on the same route first',
+  retryFirst?.kind === 'retry', JSON.stringify(retryFirst))
+check('...without touching the route',
+  (await retrying.request()).model === 'current', String((await retrying.request()).model))
+check('...and one notice explains the whole retry sequence',
+  retrying.agent.injected.length === 1
+  && String(retrying.agent.injected[0]?.content?.[0]?.text).includes('重试'),
+  String(retrying.agent.injected.length))
+
+const retrySecond = await retrying.requestError({ message: 'boom', code: 'SERVER' })
+check('the second failure spends the last retry', retrySecond?.kind === 'retry')
+const retryThird = await retrying.requestError({ message: 'boom', code: 'SERVER' })
+check('only an exhausted budget moves to the model switch',
+  retryThird?.kind === 'retry' && (await retrying.request()).model === 'big',
+  String((await retrying.request()).model))
+check('the retry notice is not repeated per attempt',
+  retrying.agent.injected.length === 2, String(retrying.agent.injected.length))
+
+// 不可重试的码直接进入升级：重发同一个请求没有意义
+const skippedRetry = withRecovery({ retryMaxRetries: 5 })
+const skippedAction = await skippedRetry.requestError({ message: 'bad request', code: 'INVALID_REQUEST' })
+check('a code outside the retryable set goes straight to the switch',
+  skippedAction?.kind === 'retry' && (await skippedRetry.request()).model === 'big'
+  && !skippedRetry.agent.injected.some((message) => String(message.content?.[0]?.text).includes('重试')))
+
+// 换过模型之后，新路由拿到完整的一轮预算（dsh 的计数是按 provider 的，会直接「用尽」）
+const perRoute = withRecovery({ retryMaxRetries: 1, retryDelayMs: 5 })
+await perRoute.requestError({ message: 'boom', code: 'SERVER' })
+await perRoute.requestError({ message: 'boom', code: 'SERVER' })
+perRoute.session.state.current = { provider: 'kenari', model: 'big', contextWindow: 262144 }
+const freshBudget = await perRoute.requestError({ message: 'boom', code: 'SERVER' })
+check('a switched-to route gets a fresh retry budget',
+  freshBudget?.kind === 'retry' && (await perRoute.request()).model === 'big',
+  String((await perRoute.request()).model))
+
+// 链上（更内层）已经决定重试时原样放行，我们既不介入也不重复等
+const handoff = withRecovery({ retryMaxRetries: 5, retryDelayMs: 5 })
+let chainCalls = 0
+handoff.ctx.on('agent/request-error', async () => {
+  chainCalls += 1
+  return { kind: 'retry' }
 })
-await ordering.requestError({ message: 'boom', code: 'SERVER' })
-const ordered = await ordering.request()
-check('our override survives an inner listener that rewrites the model back',
-  ordered.provider === 'kenari' && ordered.model === 'big', `${ordered.provider}/${ordered.model}`)
+const handoffAction = await handoff.requestError({ message: 'boom', code: 'SERVER' })
+check('the chain gets its turn before we act (no starvation)',
+  chainCalls === 1, String(chainCalls))
+check('a downstream retry decision wins over our own escalation',
+  handoffAction?.kind === 'retry' && (await handoff.request()).model === 'current'
+  && handoff.agent.injected.length === 0,
+  `injected=${handoff.agent.injected.length}`)
+
+// 链上本轮已经排程过重试（会话里出现过 llm/retry）时让位：我们不再补一轮自己的预算
+const already = withRecovery({ retryMaxRetries: 5, retryDelayMs: 5 })
+already.ctx.emit('session/event', already.session, { type: 'llm/retry', data: { turn: 1, step: 1, retry: 5 } })
+const alreadyAction = await already.requestError({ message: 'boom', code: 'SERVER' })
+check('the plugin steps aside when the chain already retried this step',
+  alreadyAction?.kind === 'retry' && (await already.request()).model === 'big'
+  && !already.agent.injected.some((message) => String(message.content?.[0]?.text).includes('重试')),
+  String((await already.request()).model))
+
+// 换模型阶段排除本 step 里失败过的路由，避免同窗口来回横跳
+const noPingPong = withRecovery()
+await noPingPong.requestError({ message: 'boom', code: 'SERVER' })
+check('the first switch leaves the failing route', (await noPingPong.request()).model === 'big')
+noPingPong.session.state.current = { provider: 'kenari', model: 'big', contextWindow: 262144 }
+await noPingPong.requestError({ message: 'boom', code: 'SERVER' })
+check('a later switch never returns to a route that already failed',
+  (await noPingPong.request()).provider === 'deepseek-official',
+  String((await noPingPong.request()).model))
 
 // 用户显式选模型（会话日志追加 model/selection）后，人的选择优先
 const manual = withRecovery()
@@ -294,12 +365,25 @@ const { KenariLlmAdapter } = await import('../lib/llm/adapter.js')
 
 // 适配器构造只保存依赖，providerRetryPolicy 不碰它们，所以空壳足够
 const shellDeps = { http: {}, catalog: {}, billing: {} }
-const wired = new KenariLlmAdapter({ ...shellDeps, retryPolicy: kenariRetryPolicy({ maxRetries: 5, delayMs: 5000 }) })
-check('the native adapter exposes the configured retry policy',
-  wired.providerRetryPolicy('kenari-direct')?.maxRetries === 5,
+const wired = new KenariLlmAdapter({ ...shellDeps, retryPolicy: dshRetryDisabledPolicy() })
+check('the native adapter hands retrying off to the plugin',
+  wired.providerRetryPolicy('kenari-direct')?.maxRetries === 0,
   String(wired.providerRetryPolicy('kenari-direct')?.maxRetries))
 check('the native adapter stays policy-free when not configured',
   new KenariLlmAdapter(shellDeps).providerRetryPolicy('kenari-direct') === undefined)
+
+// 顺序回归：installModelSelection 会用「本 step 组装时捕获的」原模型回写。
+// 它注册得更晚因而在内层；我们的 prepend 让我们拿到最终决定权。
+const ordering = withRecovery()
+const assembled = { provider: 'kenari', model: 'current' }
+ordering.ctx.on('agent/request', async (_payload, next) => {
+  const resolved = await next()
+  return { ...resolved, provider: assembled.provider, model: assembled.model }
+})
+await ordering.requestError({ message: 'boom', code: 'SERVER' })
+const ordered = await ordering.request()
+check('our override survives an inner listener that rewrites the model back',
+  ordered.provider === 'kenari' && ordered.model === 'big', `${ordered.provider}/${ordered.model}`)
 
 // ------------------------------------------------------ assembly integration
 // 上面验证的是 installModelRecovery 本身；这一段验证 apply 真的把它接上了 ——
@@ -317,6 +401,7 @@ const makeLlmSeam = () => ({
   registerModelDiscovery: () => {},
 })
 
+// 默认把重试预算设为 0：这一段验证的是升级阶段的接线，重试阶段的接线单独测
 const loadPlugin = async (overrides = {}, options = {}) => {
   const ctx = new Context()
   ctx.provide('web', { registerSearchProvider() {}, registerFetchProvider() {} })
@@ -327,7 +412,9 @@ const loadPlugin = async (overrides = {}, options = {}) => {
       currentSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-flash' }),
     })
   }
-  ctx.plugin({ name: 'kenari', inject: ['web', 'tools'], apply }, { ...Config({}), modelSwitchDelayMs: 5, ...overrides })
+  ctx.plugin({ name: 'kenari', inject: ['web', 'tools'], apply }, {
+    ...Config({}), modelSwitchDelayMs: 5, modelRetryDelayMs: 5, modelRetryMaxRetries: 0, ...overrides,
+  })
   await new Promise((resolve) => setTimeout(resolve, 200))
   return ctx
 }
@@ -350,6 +437,22 @@ const wiredNext = await wiredDispatch.waterfall(
   () => Promise.resolve({ provider: 'kenari', model: 'current' }),
 )
 check('...and the switch reaches the request', wiredNext.model === 'big', String(wiredNext.model))
+
+// 出厂默认（Config({}) 的 modelRetryMaxRetries=5）下，第一次失败必须先是重试而不是换模型 ——
+// 这条守住「重试阶段真的被 apply 接上了」，上面那组把预算设为 0 时它照样会绿
+const wiredRetryCtx = await loadPlugin({ modelRetryMaxRetries: 5 })
+const wiredRetrySession = makeSession('asm-retry')
+wiredRetrySession.state.current = { provider: 'kenari', model: 'current', contextWindow: 8192 }
+const wiredRetryAgent = makeAgent(wiredRetrySession)
+const wiredRetryDispatch = agentEvents(wiredRetryCtx, wiredRetryAgent)
+check('apply wires the retry stage in (the first failure stays on the same route)',
+  (await wiredRetryDispatch.waterfall('agent/request-error', kenariFailure(), () => Promise.resolve(undefined)))?.kind === 'retry'
+  && (await wiredRetryDispatch.waterfall(
+    'agent/request', { turn: 1, step: 1, signal: signal() },
+    () => Promise.resolve({ provider: 'kenari', model: 'current' }),
+  )).model === 'current'
+  && wiredRetryAgent.injected.length === 1,
+  String(wiredRetryAgent.injected.length))
 
 // 第二次失败 → 走 apply 里读到的真实 dsh 默认 provider
 wiredSession.state.current = { provider: 'kenari', model: 'big', contextWindow: 262144 }

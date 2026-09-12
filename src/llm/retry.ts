@@ -1,47 +1,42 @@
 /**
- * 模型失败恢复的共享件：路由判定、重试策略装配、可取消延时。
+ * 模型失败恢复的共享件：路由判定、dsh 重试的关闭策略、可取消延时。
  *
  * 为什么策略在这里拼：`LlmAdapter.providerRetryPolicy()` 只在适配器注册那一刻被调用一次，
  * 返回值随即被 dsh 冻结进注册记录（`packages/llm/llm/src/index.ts:436-442`）。所以这里产出的
- * 是「注册时的配置快照」—— 改 `modelRetryMaxRetries` 要重启 dsh 才生效，与 plugin-rules #10
- * 对结构性字段的说明一致。
+ * 是「注册时的配置快照」—— 与 plugin-rules #10 对结构性字段的说明一致。
  * @module dsh-kenari-plugin/llm/retry
  */
 
 import { resolveRetryPolicy } from '@deepseek-ai/dsh-llm'
-import type { ResolvedRetryPolicy, RetryPolicyConfig } from '@deepseek-ai/dsh-llm'
+import type { ResolvedRetryPolicy } from '@deepseek-ai/dsh-llm'
 
 /** 判定一个 provider 路由是否参与模型失败恢复。路由 id 是精确匹配，不做大小写归一。 */
 export function isRecoveryProvider(provider: string, configured: readonly string[]): boolean {
   return configured.includes(provider)
 }
 
-/** 重试策略的可调输入，取自插件 Config。 */
-export interface KenariRetryInput {
-  /** 首次请求之后的额外重试次数。 */
-  maxRetries?: number
-  /** 每次重试前的固定等待毫秒数。 */
-  delayMs?: number
-  /** 允许重试的失败码；省略则用 dsh 默认集，但显式传空数组会被拒绝。 */
-  retryableCodes?: readonly string[]
-}
-
 /**
- * 拼出 Kenari 路由的重试策略：固定间隔、无抖动。
+ * 让 dsh 自带的重试在 Kenari 路由上停手：重试由插件自己的状态机负责（见 `./recovery.ts`）。
  *
- * dsh 的退避是 `initialDelayMs * 2^n` 用 `maxDelayMs` 封顶，所以把两者设成同一个值、
- * 关掉抖动，就得到「每次都等同样久」。「5s 后重试」只有这样才表达得准确。
+ * 为什么不把重试交给 `dsh-llm-retry`：它会**静默消失**。`agent/request-error` 是没有
+ * 「默认行为」的瀑布 —— 排在后面的监听器只在前面调用 `next()` 时才被调用。只要注册顺序
+ * 被翻过来一次（live patch / HMR 重载后重注册），排在外层的策略就把 llm-retry 永久饿死，
+ * 而插件没有任何办法观察到这件事。实测线上会话里 `llm/retry` 事件数为 0，换模型发生在
+ * 第一次失败上 —— 承诺的 5 次重试从未执行过。重试是插件对用户承诺的行为，不能建立在一个
+ * 自己看不见的机制上，所以这里把它关掉，由 `recovery.ts` 自己数次数、自己等。
+ *
+ * 关闭方式只有一种：`maxRetries: 0` 让 `previousRetry >= maxRetries` 立刻成立，llm-retry
+ * 直接 `next()`。`retryableCodes` 必须非空（dsh 的校验），给一个占位码即可 —— 0 次重试时
+ * 它永远不会被读到。
  */
-export function kenariRetryPolicy(input: KenariRetryInput): ResolvedRetryPolicy {
-  const delayMs = input.delayMs ?? 5_000
-  const config: RetryPolicyConfig = {
+export function dshRetryDisabledPolicy(): ResolvedRetryPolicy {
+  return resolveRetryPolicy({
     mode: 'normal',
-    maxRetries: input.maxRetries ?? 5,
-    ...(input.retryableCodes === undefined ? {} : { retryableCodes: [...input.retryableCodes] }),
-    backoff: { initialDelayMs: delayMs, maxDelayMs: delayMs, jitterRatio: 0 },
-  }
-  // resolveRetryPolicy 顺带做校验：maxRetries 非负、retryableCodes 非空
-  return resolveRetryPolicy(config, 'kenari.modelRecovery.retryPolicy')
+    maxRetries: 0,
+    retryableCodes: ['TRANSPORT'],
+    // 退避参数用最小值：0 次重试时它不会被执行，但 dsh 要求 initialDelayMs 为正
+    backoff: { initialDelayMs: 1, maxDelayMs: 1, jitterRatio: 0 },
+  }, 'kenari.modelRecovery.dshRetryDisabled')
 }
 
 /**
