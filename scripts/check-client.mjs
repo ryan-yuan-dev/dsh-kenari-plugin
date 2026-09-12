@@ -628,6 +628,48 @@ check(
   )
 }
 
+// The footer now commits exactly one thing — the key — so it is offered only while
+// that field holds something, and it is found by shape rather than by dsh's hashed
+// class. Both halves are silent failures if wrong: a footer that never hides looks
+// like a deliberate design, and one that is never found hides forever.
+{
+  const cancel = { textContent: '取消' }
+  const submit = { textContent: '保存' }
+  const footer = { contains: (node) => node === cancel || node === submit, parentElement: null }
+  footer.contains = (node) => node === cancel || node === submit
+  const editor = { contains: (node) => node === cancel || node === submit }
+  const key = { type: 'password', value: '', parentElement: null }
+  const style = {}
+  footer.style = style
+  const card = {
+    querySelectorAll: (selector) => (selector === 'button' ? [cancel, submit] : [key]),
+    contains: () => true,
+  }
+  cancel.parentElement = footer
+  submit.parentElement = footer
+  footer.parentElement = editor
+  editor.contains = (node) => node === cancel || node === submit
+  check(
+    'the footer is found from the pair it holds, not from its class',
+    internals.footerOf(card) === footer
+    && internals.footerOf({ querySelectorAll: () => [submit] }) === null
+    && internals.footerOf(null) === null,
+  )
+  internals.syncFooterVisibility(card)
+  const empty = style.display
+  key.value = 'sk-test'
+  internals.syncFooterVisibility(card)
+  const typed = style.display
+  key.value = '   '
+  internals.syncFooterVisibility(card)
+  const blank = style.display
+  check(
+    'the footer shows only while the key field holds a value',
+    empty === 'none' && typed === '' && blank === 'none',
+    `empty=${empty} typed=${JSON.stringify(typed)} blank=${blank}`,
+  )
+}
+
 // cardWithMarker walks from a button up to the first ancestor holding the
 // marker. The negative case is the one that matters: another provider's card
 // must not be claimed, because the native editor is that card's only writer.

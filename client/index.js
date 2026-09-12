@@ -1094,14 +1094,20 @@ window.__ModuleLoader__.load({
 
       /** One field edit, read off whichever input the event came from. */
       const onFieldEvent = (event) => {
-        if (takeoverBypassed || onField === null || !pickerChannel.mounted) return
+        if (takeoverBypassed || !pickerChannel.mounted) return
         const field = event.target
         if (field === null || field === undefined || typeof field.getAttribute !== 'function') return
-        if (field.type === 'password') return
-        const target = fieldTargetOf(ariaLabelOf(field))
-        if (target === null) return
         const card = cardWithMarker(field)
         if (card === null) return
+        // The key is not written here — it is what the card's 保存 commits — but
+        // its content is what decides whether that button is offered at all.
+        if (field.type === 'password') {
+          syncFooterVisibility(card)
+          return
+        }
+        if (onField === null) return
+        const target = fieldTargetOf(ariaLabelOf(field))
+        if (target === null) return
         onField(card, target, typeof field.value === 'string' ? field.value : '')
       }
 
@@ -1375,6 +1381,55 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The card's action row: the smallest ancestor of the commit button that also
+     * holds the dismiss one. Its class is a CSS-module hash; this shape is not.
+     * @param card - the provider's card element.
+     * @returns the row, or null when the card is not the shape this bundle knows.
+     */
+    function footerOf(card) {
+      if (card === null || card === undefined || typeof card.querySelectorAll !== 'function') return null
+      const buttons = card.querySelectorAll('button')
+      if (buttons === null || buttons === undefined || typeof buttons.length !== 'number') return null
+      let submit = null
+      let cancel = null
+      for (let at = 0; at < buttons.length; at += 1) {
+        const node = buttons[at]
+        if (node === null || node === undefined) continue
+        const label = typeof node.textContent === 'string' ? node.textContent.trim() : ''
+        if (submit === null && SUBMIT_LABELS.indexOf(label) !== -1) submit = node
+        if (cancel === null && CANCEL_LABELS.indexOf(label) !== -1) cancel = node
+      }
+      if (submit === null || cancel === null) return null
+      let footer = submit.parentElement
+      while (footer !== null && footer !== undefined && footer !== card
+        && typeof footer.contains === 'function' && !footer.contains(cancel)) {
+        footer = footer.parentElement
+      }
+      return footer === null || footer === undefined || footer === card ? null : footer
+    }
+
+    /**
+     * Show the card's 取消/保存 only while the key field holds something.
+     *
+     * Those two buttons now commit exactly one thing — the key — so with the field
+     * empty they offer a commit of nothing, and the card is cleaner without them.
+     * dsh never pre-fills the field (its placeholder is 已配置——输入新值可替换),
+     * so a card opens with them hidden and they appear on the first keystroke.
+     *
+     * `hidden` would lose to dsh's own `display` rule for that row, hence the
+     * inline style, cleared rather than set to a literal so the row keeps looking
+     * the way dsh drew it.
+     * @param card - the provider's card element.
+     */
+    function syncFooterVisibility(card) {
+      const footer = footerOf(card)
+      if (footer === null || footer.style === null || footer.style === undefined) return
+      const input = keyInputOf(card)
+      const typed = input !== null && typeof input.value === 'string' && input.value.trim().length > 0
+      footer.style.display = typed ? '' : 'none'
+    }
+
+    /**
      * Put the card's 取消/保存 directly under the API-key field.
      *
      * Everything else on this card writes itself now — the model list on add and
@@ -1390,32 +1445,13 @@ window.__ModuleLoader__.load({
      * @param card - the provider's card element.
      */
     function parkFooterUnderKey(card) {
-      if (card === null || card === undefined || typeof card.querySelectorAll !== 'function') return
-      const buttons = card.querySelectorAll('button')
-      if (buttons === null || buttons === undefined || typeof buttons.length !== 'number') return
-      let submit = null
-      let cancel = null
-      for (let at = 0; at < buttons.length; at += 1) {
-        const node = buttons[at]
-        if (node === null || node === undefined) continue
-        const label = typeof node.textContent === 'string' ? node.textContent.trim() : ''
-        if (submit === null && SUBMIT_LABELS.indexOf(label) !== -1) submit = node
-        if (cancel === null && CANCEL_LABELS.indexOf(label) !== -1) cancel = node
-      }
-      if (submit === null || cancel === null) return
-      // The footer is the smallest ancestor of the submit button that also holds
-      // the cancel one; its class is a CSS-module hash, this shape is not.
-      let footer = submit.parentElement
-      while (footer !== null && footer !== undefined && footer !== card
-        && typeof footer.contains === 'function' && !footer.contains(cancel)) {
-        footer = footer.parentElement
-      }
-      if (footer === null || footer === undefined || footer === card) return
+      const footer = footerOf(card)
+      if (footer === null) return
       const keyInput = keyInputOf(card)
       const keyField = keyInput === null ? null : keyInput.parentElement
       if (keyField === null || keyField === undefined || keyField.parentElement === null) return
-      if (keyField.nextElementSibling === footer) return
-      keyField.parentElement.insertBefore(footer, keyField.nextElementSibling)
+      if (keyField.nextElementSibling !== footer) keyField.parentElement.insertBefore(footer, keyField.nextElementSibling)
+      syncFooterVisibility(card)
     }
 
     /**
@@ -1750,7 +1786,7 @@ window.__ModuleLoader__.load({
      * because a catalog browser that cannot add anything just duplicated it.
      */
     function useCatalogPanel(props) {
-      const { routeNs, routeProvider, loadPanel, addModels, onAdded } = props
+      const { routeNs, routeProvider, loadPanel, addModels, onAdded, onComplete } = props
       const [state, setState] = React.useState({ status: 'loading' })
       const [reloads, setReloads] = React.useState(0)
       const [query, setQuery] = React.useState('')
@@ -1829,6 +1865,14 @@ window.__ModuleLoader__.load({
               } catch (_remountFailure) {
                 remounted = false
               }
+            }
+            // Confirmed on the card itself: the rows are already on screen behind
+            // this dialog, so the dialog has nothing left to say and gets out of
+            // the way. An unconfirmed refresh keeps it open, because then its copy
+            // is the only thing that can tell the user to reopen the card.
+            if (remounted && typeof onComplete === 'function') {
+              onComplete()
+              return
             }
             setWrite({
               status: 'added',
@@ -1994,8 +2038,10 @@ window.__ModuleLoader__.load({
         addModels,
         // The card this modal was opened from is the row's editing card; remounting
         // it is what makes the freshly written models visible in its list. The ids
-        // travel with the ask so the remount can check its own work.
+        // travel with the ask so the remount can check its own work, and a confirmed
+        // refresh closes this dialog rather than reporting what the card now shows.
         onAdded: (addedIds) => refreshProviderEditor(nativeButton, addedIds),
+        onComplete: onClose,
       })
 
       /**
@@ -2878,6 +2924,8 @@ window.__ModuleLoader__.load({
       fieldTargetOf,
       capacityOf,
       patchModels,
+      footerOf,
+      syncFooterVisibility,
       isRemoveLabel,
       removalRowOf,
       withoutModel,
