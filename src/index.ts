@@ -24,7 +24,7 @@ import { KenariCatalog } from './catalog.js'
 import { KenariPlans } from './plans.js'
 import { registerCatalogView } from './catalog-view.js'
 import { registerFaviconRoute } from './favicon.js'
-import { applyPlanDefaultRoute } from './default-route.js'
+import { applyPlanDefaultRoute, refreshRouteModelNames } from './default-route.js'
 import { BalanceMonitor, BillingLedger } from './billing.js'
 import { installKenariSettings, KENARI_SETTINGS_NAMESPACE } from './settings.js'
 import { KenariLlmAdapter } from './llm/adapter.js'
@@ -300,8 +300,17 @@ export function apply(ctx: Context, config: Config): void {
   // 默认路由：按当前 key 的套餐把「免缓存额度」模型填进 `kenari` 路由。
   // 预设是静态 YAML，算不出套餐相关的东西，所以要在设置节挂上之后补一次
   // （用户层已经自己写过 models 时一律不动，详见 src/default-route.ts）。
+  //
+  // 紧接着刷一次名字：路由名会随口径变（0.2.0 起带 `Kenari ` 前缀），而设置是
+  // 一次性物化的，不刷就会永远停在旧写法。只动"仍然是旧口径派生值"的那些名字。
   ctx.inject(['settings'], (settingsCtx) => {
-    void applyPlanDefaultRoute(settingsCtx, { http: deps, catalog, plans })
+    void (async () => {
+      await applyPlanDefaultRoute(settingsCtx, { http: deps, catalog, plans })
+      await refreshRouteModelNames(settingsCtx, { http: deps, catalog })
+    })().catch((err: unknown) => {
+      // 两者各自都吞了自己的失败；走到这里说明有出乎意料的抛出，记一笔但不影响加载
+      deps.logger?.warn(`kenari: 路由初始化（默认路由/名字刷新）异常：${err instanceof Error ? err.message : String(err)}`)
+    })
   })
 
   // 第 5 期（可选）：自带 LlmAdapter。默认关闭，且路由名与 llm-pi-ai 预设不同，

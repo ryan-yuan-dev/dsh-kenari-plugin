@@ -10,9 +10,9 @@
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { KenariCatalog } from '../lib/catalog.js'
+import { DISPLAY_NAME_PREFIX, KenariCatalog, displayNameOf } from '../lib/catalog.js'
 import { KenariPlans } from '../lib/plans.js'
-import { applyPlanDefaultRoute } from '../lib/default-route.js'
+import { applyPlanDefaultRoute, refreshRouteModelNames } from '../lib/default-route.js'
 
 const envFile = readFileSync(join(process.env.HOME, '.dsh', '.env'), 'utf8')
 const API_KEY = /^KENARI_API_KEY=(.+)$/m.exec(envFile)?.[1]?.trim()
@@ -126,6 +126,54 @@ if (API_KEY !== undefined) {
       console.log(`\n套餐：${planName}；免缓存清单 ${expected.length} 个 → 路由写入 ${ids.length} 个`)
     }
   }
+}
+
+// ── 名字刷新（`refreshRouteModelNames`）─────────────────────────────────────────
+//
+// 口径变过一次（0.2.0 起路由名带 `Kenari ` 前缀），而设置是一次性物化的，所以要有一条
+// 把旧名字刷过来的路径。判据是**值**不是来源：只有仍然逐字等于旧口径派生值的名字才动。
+// 下面四个用例把这条边界钉死（真目录，id 取目录里一定有的会话模型）。
+const oldName = displayNameOf({ id: 'deepseek-v4-flash' })
+const modelsIn = (entries) => ({ providers: { kenari: { models: entries } } })
+
+/** 跑一次刷新，返回假设置服务。 */
+const runRefresh = async (user) => {
+  const fake = fakeSettings(descriptor(user))
+  await refreshRouteModelNames(fake.ctx, { http: deps(async () => undefined), catalog })
+  return fake
+}
+
+// 1) 旧口径的名字 → 就地加前缀，其余字段一个不动
+{
+  const fake = await runRefresh(modelsIn([
+    { id: 'deepseek-v4-flash', name: oldName, maxTokens: 65536, compat: { keep: 1 } },
+  ]))
+  const written = fake.writes[0]?.ops[0]
+  const row = written?.value?.[0]
+  check('旧口径的名字被刷成带前缀', written !== undefined && row?.name === DISPLAY_NAME_PREFIX + oldName,
+    `writes=${fake.writes.length}${row === undefined ? '' : `，name=${row.name}`}`)
+  check('刷新只改 name，其它字段原样带走',
+    row?.maxTokens === 65536 && row?.compat?.keep === 1 && row?.id === 'deepseek-v4-flash')
+}
+
+// 2) 用户改过名 → 一个字节都不碰（这是"用户的东西最大"的边界）
+{
+  const fake = await runRefresh(modelsIn([{ id: 'deepseek-v4-flash', name: '便宜的那个' }]))
+  check('用户改过的名字不被刷新覆盖', fake.writes.length === 0, `writes=${fake.writes.length}`)
+}
+
+// 3) 已经带前缀 → 幂等（第二次启动不再写）
+{
+  const fake = await runRefresh(modelsIn([{ id: 'deepseek-v4-flash', name: DISPLAY_NAME_PREFIX + oldName }]))
+  check('已带前缀时不再写（幂等）', fake.writes.length === 0, `writes=${fake.writes.length}`)
+}
+
+// 4) 用户层没有这个数组 / 目录查不到的 id → 都不写
+{
+  const noArray = await runRefresh(undefined)
+  const unknownId = await runRefresh(modelsIn([{ id: 'user-handwritten', name: oldName }]))
+  check('用户层没有数组时不写（预设本身已是当前口径）', noArray.writes.length === 0, `writes=${noArray.writes.length}`)
+  check('目录里查不到的 id 不写（可能是用户手写的路由条目）', unknownId.writes.length === 0, `writes=${unknownId.writes.length}`)
 }
 
 if (failures > 0) {
