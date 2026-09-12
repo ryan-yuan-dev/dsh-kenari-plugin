@@ -366,6 +366,41 @@ check(
   && internals.isTakeoverLabel('') === false,
 )
 
+// Collapse-then-expand IS the editing card's remount: dsh unmounts the card on
+// collapse (`open ? <ProviderEditor/> : null`), and the card seeds its model list
+// once at mount — it deliberately ignores pushed settings refreshes so a
+// half-typed key survives them. A write made from this plugin's modal therefore
+// only becomes visible in that list by remounting the card.
+//
+// The deferral matters as much as the click count: collapse is a state update, so
+// re-reading `open` inside the same click expands nothing. The sandbox's
+// setTimeout runs synchronously, which is what makes both clicks observable here.
+{
+  const clicks = []
+  const toggle = { textContent: '编辑', click: () => { clicks.push('toggle') } }
+  const row = { querySelectorAll: (selector) => (selector === 'button' ? [toggle] : []) }
+  const native = { closest: (selector) => (selector === 'li' ? row : null) }
+  check(
+    'the editing card is remounted by clicking its toggle twice',
+    internals.refreshProviderEditor(native) === true && clicks.length === 2,
+    `clicks=${clicks.length}`,
+  )
+  check(
+    'a row without that toggle fails open instead of throwing',
+    internals.refreshProviderEditor({ closest: () => ({ querySelectorAll: () => [] }) }) === false
+    && internals.refreshProviderEditor({ closest: () => null }) === false
+    && internals.refreshProviderEditor({}) === false
+    && internals.refreshProviderEditor(null) === false
+    && internals.refreshProviderEditor(undefined) === false,
+  )
+  check(
+    'the toggle labels cover both locales dsh ships',
+    internals.EDIT_LABELS.length === 2
+    && internals.EDIT_LABELS.indexOf('编辑') !== -1
+    && internals.EDIT_LABELS.indexOf('Edit') !== -1,
+  )
+}
+
 // cardWithMarker walks from a button up to the first ancestor holding the
 // marker. The negative case is the one that matters: another provider's card
 // must not be claimed, because the native editor is that card's only writer.

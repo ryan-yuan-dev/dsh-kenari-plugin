@@ -188,13 +188,15 @@ window.__ModuleLoader__.load({
         'catalog.readonly': '设置只读，不能写入。',
         'catalog.settingsReadOnly': '设置只读，改动只能在配置文件里做。',
         'catalog.noNamespace': '设置里没有 {ns} 这一节，先让插件把预设写进去。',
+        'catalog.writeRefused': '写入被拒绝，{count} 个模型没进设置。多半是设置刚被别处改过，重新打开面板再试一次。',
         'catalog.plansError': '套餐表读取失败，「套餐内」标签与筛选这次不可用：{message}',
         'catalog.empty': '当前筛选下没有模型。',
         'catalog.summary': '显示 {visible} / {total} 个，待加入 {addable} 个。「套餐内」表示这个付费模型由订阅套餐覆盖，否则走余额。',
         'catalog.footerNote': '加入后立即生效',
         'catalog.submit': '添加所选（{count}）',
         'catalog.saving': '正在加入…',
-        'catalog.added': '已加入 {count} 个模型。模型页的列表要重新展开「编辑」才会刷新。',
+        'catalog.added': '已加入 {count} 个模型，编辑卡片已刷新。',
+        'catalog.addedStale': '已加入 {count} 个模型。模型页的列表要重新展开「编辑」才会刷新。',
         'catalog.chatOnly': '（不支持会话）',
         'catalog.inRoute': '已在路由',
 
@@ -311,13 +313,15 @@ window.__ModuleLoader__.load({
         'catalog.readonly': 'Settings are read-only; nothing can be written.',
         'catalog.settingsReadOnly': 'Settings are read-only; changes have to go in the configuration file.',
         'catalog.noNamespace': 'Your settings have no {ns} section yet. Let the plugin write its preset first.',
+        'catalog.writeRefused': 'The write was refused and {count} models did not reach your settings. Usually the document changed elsewhere; reopen the panel and try again.',
         'catalog.plansError': 'Could not read the plan table, so the "In plan" tag and filter are unavailable this time: {message}',
         'catalog.empty': 'No model matches these filters.',
         'catalog.summary': 'Showing {visible} of {total}, {addable} ready to add. "In plan" means a subscription covers this paid model; otherwise it is billed to your balance.',
         'catalog.footerNote': 'Applies immediately',
         'catalog.submit': 'Add selected ({count})',
         'catalog.saving': 'Adding…',
-        'catalog.added': 'Added {count} models. The list on the Models page refreshes once you reopen Edit.',
+        'catalog.added': 'Added {count} models; the editor card was refreshed.',
+        'catalog.addedStale': 'Added {count} models. The list on the Models page refreshes once you reopen Edit.',
         'catalog.chatOnly': '(not a chat model)',
         'catalog.inRoute': 'Already in the route',
 
@@ -359,6 +363,17 @@ window.__ModuleLoader__.load({
      * both are taken over because for Kenari the catalog decides what exists.
      */
     const TAKEOVER_LABELS = ['添加模型', 'Add model', '获取可用模型', 'Fetch available models']
+
+    /**
+     * The row's own editing toggle, in the locales this build ships.
+     *
+     * Clicking it is `setEditing(open ? undefined : target)`, and the card itself
+     * renders as `open ? <ProviderEditor/> : null` — so collapse unmounts the card
+     * and expand mounts a fresh one. Same identity problem as {@link TAKEOVER_LABELS}:
+     * the class is a hash and the button carries the same 编辑/Edit text in both
+     * locales, so text is what there is to match.
+     */
+    const EDIT_LABELS = ['编辑', 'Edit']
 
     /**
      * Whether a button's label (already trimmed) belongs to this takeover. An
@@ -943,6 +958,60 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The row's editing toggle, found from the row a taken-over button sits in.
+     *
+     * Scoped to `closest('li')` — the same per-provider list item the marker
+     * lookup uses — so a sibling provider's identical 编辑 button is never claimed.
+     * @param row - the provider's list item, or null.
+     * @returns the toggle button, or null when this DOM is not the shape we know.
+     */
+    function editToggleOf(row) {
+      if (row === null || row === undefined || typeof row.querySelectorAll !== 'function') return null
+      const buttons = row.querySelectorAll('button')
+      for (let index = 0; index < buttons.length; index += 1) {
+        const node = buttons[index]
+        const label = typeof node.textContent === 'string' ? node.textContent.trim() : ''
+        if (EDIT_LABELS.indexOf(label) !== -1) return node
+      }
+      return null
+    }
+
+    /**
+     * Re-mount the editing card this bundle's picker was opened from.
+     *
+     * Why it is needed: the card seeds its model list once, at mount, and
+     * deliberately does not follow a pushed settings refresh — that is what keeps
+     * a half-typed API key from being overwritten. A write made from this plugin's
+     * modal therefore lands *behind* the card, and its list would stay stale until
+     * something remounted it. Collapse-then-expand IS that remount, and it is the
+     * card's own control rather than a synthetic dialog close.
+     *
+     * The draft it discards was already invalid: the card's revision fence is stale
+     * after this plugin's write, so its next save would be refused as stale anyway.
+     *
+     * Fail-open — no toggle found (a dsh release renamed it) returns false and the
+     * caller falls back to the copy that tells the user to reopen the card.
+     * @param button - the native button the takeover intercepted.
+     * @returns whether a remount was started.
+     */
+    function refreshProviderEditor(button) {
+      if (button === null || button === undefined || typeof button.closest !== 'function') return false
+      const row = button.closest('li')
+      const toggle = editToggleOf(row)
+      if (toggle === null || typeof toggle.click !== 'function') return false
+      toggle.click()
+      // The second click must land after React commits the first: collapse is a
+      // state update, and re-reading `open` inside the same click would expand
+      // nothing. The row node survives the collapse (it is keyed by provider), so
+      // the toggle is looked up again there instead of reusing a detached node.
+      setTimeout(() => {
+        const again = editToggleOf(row)
+        if (again !== null && typeof again.click === 'function') again.click()
+      }, 0)
+      return true
+    }
+
+    /**
      * The Kenari glyph on the settings panel's own nav rail.
      *
      * dsh's shell picks that glyph from a hardcoded id switch (`navIcon(row.id)`:
@@ -1097,7 +1166,7 @@ window.__ModuleLoader__.load({
      * because a catalog browser that cannot add anything just duplicated it.
      */
     function useCatalogPanel(props) {
-      const { routeNs, routeProvider, loadPanel, addModels } = props
+      const { routeNs, routeProvider, loadPanel, addModels, onAdded } = props
       const [state, setState] = React.useState({ status: 'loading' })
       const [reloads, setReloads] = React.useState(0)
       const [query, setQuery] = React.useState('')
@@ -1160,13 +1229,23 @@ window.__ModuleLoader__.load({
         setWrite({ status: 'saving' })
         addModels({ settingsNs: routeNs, provider: routeProvider }, profiles).then(
           (result) => {
-            setWrite(result.ok === true
-              ? { status: 'added', message: t('catalog.added', { count: profiles.length }) }
-              : { status: 'error', message: result.message })
-            if (result.ok === true) {
-              setPicked([])
-              setReloads((current) => current + 1)
+            if (result.ok !== true) {
+              setWrite({ status: 'error', message: result.message })
+              return
             }
+            // The card behind this modal seeds its list once, at mount, and does not
+            // follow pushed settings refreshes — so it has to be remounted for the
+            // write to show up in it. `onAdded` reports whether that remount was
+            // possible; when it is not, the copy says how to get there by hand.
+            const remounted = typeof onAdded === 'function' && onAdded() === true
+            setWrite({
+              status: 'added',
+              message: remounted
+                ? t('catalog.added', { count: profiles.length })
+                : t('catalog.addedStale', { count: profiles.length }),
+            })
+            setPicked([])
+            setReloads((current) => current + 1)
           },
           (err) => setWrite({ status: 'error', message: String(err && err.message ? err.message : err) }),
         )
@@ -1316,7 +1395,15 @@ window.__ModuleLoader__.load({
      */
     function ModelCatalogModal(props) {
       const { onClose, nativeButton, loadPanel, addModels, routeNs, routeProvider } = props
-      const panel = useCatalogPanel({ routeNs, routeProvider, loadPanel, addModels })
+      const panel = useCatalogPanel({
+        routeNs,
+        routeProvider,
+        loadPanel,
+        addModels,
+        // The card this modal was opened from is the row's editing card; remounting
+        // it is what makes the freshly written models visible in its list.
+        onAdded: () => refreshProviderEditor(nativeButton),
+      })
 
       /**
        * The way back out: close this dialog, then re-click the button dsh
@@ -1773,6 +1860,11 @@ window.__ModuleLoader__.load({
      */
     function apply(ctx) {
       const scope = ctx.settingsScope.bind({ namespace: NS })
+      // The route's own scope, held beside this plugin's: writes to the pi-ai
+      // section go through it rather than through a bare `settings.mutate`, and
+      // that is what folds the write answer into the shared settings mirror the
+      // Models page reads. See `addModels`.
+      const routeScope = ctx.settingsScope.bind({ namespace: PI_AI_NS })
 
       // Bind the translator before anything can render: the components below
       // call it, and every one of them is reachable from here on.
@@ -1882,6 +1974,16 @@ window.__ModuleLoader__.load({
        * list that is currently in effect (user layer when it owns the array,
        * else the composition layer the patch pinned) and only append. Without
        * that, adding one paid model would silently drop the free presets.
+       *
+       * The write goes through this route's settings scope, not a bare
+       * `settings.mutate`: the scope folds the write answer into the shared
+       * settings mirror the Models page reads, so the editing card this plugin
+       * remounts right after reads the new list. A bare wire write would leave
+       * that mirror waiting for the Host's push, which the remount can outrun.
+       *
+       * The scope reports no failure — a refused or unanswered write reloads the
+       * mirror and settles — so success is decided by the document afterwards,
+       * never by what this function assumed it wrote.
        */
       const addModels = async (route, profiles) => {
         const read = await readPiAi()
@@ -1894,13 +1996,20 @@ window.__ModuleLoader__.load({
           if (model && typeof model.id === 'string') byId.set(model.id, model)
         }
         for (const profile of profiles) if (!byId.has(profile.id)) byId.set(profile.id, profile)
-        const written = await ctx.remote.settings.mutate(
-          route.settingsNs,
+        await routeScope.mutate(
           [{ op: 'set', path: ['providers', route.provider, 'models'], value: [...byId.values()] }],
           read.view.revision,
         )
-        if (!written.ok) return { ok: false, message: `${written.error.code}: ${written.error.message}` }
-        return { ok: true }
+        const after = await readPiAi()
+        const present = new Set(
+          routeModelsOf(after.view, route.provider)
+            .map((model) => (model && typeof model.id === 'string' ? model.id : undefined))
+            .filter((id) => id !== undefined),
+        )
+        const missing = profiles.filter((profile) => !present.has(profile.id)).length
+        return missing === 0
+          ? { ok: true }
+          : { ok: false, message: t('catalog.writeRefused', { count: missing }) }
       }
 
       const injected = () => ({ scope, loadModels, describeKey })
@@ -1957,6 +2066,8 @@ window.__ModuleLoader__.load({
     exports.__internals = {
       CAPABILITY_TAGS,
       TAKEOVER_LABELS,
+      EDIT_LABELS,
+      refreshProviderEditor,
       isTakeoverLabel,
       MARKER_ATTR,
       pathGet,
