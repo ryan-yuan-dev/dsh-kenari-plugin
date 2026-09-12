@@ -5,3 +5,6 @@ dist/
 
 # macOS
 .DS_Store
+
+# 编码 Agent 的会话内状态（计划草稿等），不属于仓库内容
+.zcode/
