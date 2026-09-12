@@ -376,6 +376,25 @@ window.__ModuleLoader__.load({
     const EDIT_LABELS = ['编辑', 'Edit']
 
     /**
+     * The prefix of each row's model-id field, in the locales this build ships
+     * (`ModelListEditor` labels them `${modelId} ${index + 1}`). Reading those
+     * fields back is how the remount below proves the card it re-seeded really
+     * carries the models that were just written.
+     */
+    const MODEL_ID_LABELS = ['模型 ID', 'Model ID']
+
+    /**
+     * How many collapse/expand attempts the remount gets, and how long each
+     * waits for the page to paint, in milliseconds. The card is re-seeded from
+     * the Models page's own settings snapshot, which React re-renders
+     * asynchronously after the write — so the first attempt can legitimately land
+     * before it, and the wait is what a later one needs. The budget bounds a
+     * hopeless case at roughly a second, after which the caller says so.
+     */
+    const REFRESH_ATTEMPTS = 8
+    const REFRESH_RETRY_MS = 60
+
+    /**
      * Whether a button's label (already trimmed) belongs to this takeover. An
      * exact match, never a prefix: the Models page carries other 添加… buttons
      * whose native meaning has nothing to do with this card's model list.
@@ -977,7 +996,66 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Re-mount the editing card this bundle's picker was opened from.
+     * The model ids the card's own rows currently show, or null when `row` is
+     * not the shape this bundle knows.
+     *
+     * Read straight from the row inputs rather than from any snapshot: it is the
+     * DOM the user is looking at that has to carry the answer.
+     * @param row - the provider's list item, or null.
+     * @returns the ids in row order, or null when the row cannot be read.
+     */
+    function cardModelIds(row) {
+      if (row === null || row === undefined || typeof row.querySelectorAll !== 'function') return null
+      const inputs = row.querySelectorAll('input')
+      if (inputs === null || inputs === undefined || typeof inputs.length !== 'number') return null
+      const ids = []
+      for (let index = 0; index < inputs.length; index += 1) {
+        const node = inputs[index]
+        if (node === null || node === undefined) continue
+        const label = typeof node.getAttribute === 'function' ? node.getAttribute('aria-label') : null
+        if (typeof label !== 'string') continue
+        for (let at = 0; at < MODEL_ID_LABELS.length; at += 1) {
+          if (label.indexOf(MODEL_ID_LABELS[at]) === 0) {
+            ids.push(typeof node.value === 'string' ? node.value : '')
+            break
+          }
+        }
+      }
+      return ids
+    }
+
+    /**
+     * Let the page paint the state this plugin just changed. The remount below
+     * has to wait for React, and a fixed delay is the only thing that can: the
+     * work being waited on is another component's render, which no DOM event
+     * announces.
+     * @returns a promise settling after one retry interval.
+     */
+    function afterPaint() {
+      return new Promise((resolve) => {
+        setTimeout(resolve, REFRESH_RETRY_MS)
+      })
+    }
+
+    /**
+     * Re-open the card's 自定义设置 fold, which the remount re-creates closed.
+     *
+     * The models this plugin adds live inside that fold, so without this the
+     * list refreshes out of sight and the user still has to expand it to see
+     * what they added. `open` is the browser's own attribute here — React renders
+     * this `<details>` without controlling it, so setting it is not a state
+     * write it would undo.
+     * @param row - the provider's list item.
+     */
+    function openEditorFold(row) {
+      if (row === null || row === undefined || typeof row.querySelector !== 'function') return
+      const fold = row.querySelector('details')
+      if (fold !== null && fold !== undefined) fold.open = true
+    }
+
+    /**
+     * Re-mount the editing card this bundle's picker was opened from, and report
+     * success only once its list actually lists what was just written.
      *
      * Why it is needed: the card seeds its model list once, at mount, and
      * deliberately does not follow a pushed settings refresh — that is what keeps
@@ -989,26 +1067,49 @@ window.__ModuleLoader__.load({
      * The draft it discards was already invalid: the card's revision fence is stale
      * after this plugin's write, so its next save would be refused as stale anyway.
      *
-     * Fail-open — no toggle found (a dsh release renamed it) returns false and the
-     * caller falls back to the copy that tells the user to reopen the card.
+     * Why the result is checked instead of assumed: the remount re-seeds from the
+     * Models page's snapshot, and a single collapse/expand issued the moment the
+     * write resolves can run before React has re-rendered that page. The card then
+     * looks refreshed and still lists the OLD models — the exact bug this exists to
+     * fix, wearing the success copy. So each attempt is compared against the ids it
+     * must show, spaced by a paint, until it agrees or the budget runs out.
+     *
+     * Fail-open — no toggle found (a dsh release renamed it), or a list that never
+     * agrees, returns false and the caller falls back to the copy that names the
+     * manual way.
      * @param button - the native button the takeover intercepted.
-     * @returns whether a remount was started.
+     * @param addedIds - the model ids the card's list must contain to count as refreshed.
+     * @returns whether the card now lists every added id.
      */
-    function refreshProviderEditor(button) {
+    async function refreshProviderEditor(button, addedIds) {
       if (button === null || button === undefined || typeof button.closest !== 'function') return false
+      const wanted = Array.isArray(addedIds) ? addedIds.filter((id) => typeof id === 'string') : []
+      // Resolved ONCE, before anything is clicked: the button that opened the
+      // picker lives INSIDE the editor, so collapsing detaches it and every later
+      // `button.closest('li')` would answer null. The row itself survives — dsh
+      // keys it by provider and only the editor inside it comes and goes.
       const row = button.closest('li')
-      const toggle = editToggleOf(row)
-      if (toggle === null || typeof toggle.click !== 'function') return false
-      toggle.click()
-      // The second click must land after React commits the first: collapse is a
-      // state update, and re-reading `open` inside the same click would expand
-      // nothing. The row node survives the collapse (it is keyed by provider), so
-      // the toggle is looked up again there instead of reusing a detached node.
-      setTimeout(() => {
+      if (row === null || row === undefined) return false
+      for (let attempt = 0; attempt < REFRESH_ATTEMPTS; attempt += 1) {
+        const toggle = editToggleOf(row)
+        if (toggle === null || typeof toggle.click !== 'function') return false
+        toggle.click()
+        // The second click must land after React commits the first: collapse is a
+        // state update, and re-reading `open` inside the same click would expand
+        // nothing. The row node survives the collapse (it is keyed by provider), so
+        // the toggle is looked up again there instead of reusing a detached node.
+        await afterPaint()
         const again = editToggleOf(row)
         if (again !== null && typeof again.click === 'function') again.click()
-      }, 0)
-      return true
+        await afterPaint()
+        const shown = cardModelIds(row)
+        if (shown === null) return false
+        if (wanted.every((id) => shown.indexOf(id) !== -1)) {
+          openEditorFold(row)
+          return true
+        }
+      }
+      return false
     }
 
     /**
@@ -1228,16 +1329,24 @@ window.__ModuleLoader__.load({
         if (profiles.length === 0 || routeNs === undefined || routeProvider === undefined) return
         setWrite({ status: 'saving' })
         addModels({ settingsNs: routeNs, provider: routeProvider }, profiles).then(
-          (result) => {
+          async (result) => {
             if (result.ok !== true) {
               setWrite({ status: 'error', message: result.message })
               return
             }
             // The card behind this modal seeds its list once, at mount, and does not
             // follow pushed settings refreshes — so it has to be remounted for the
-            // write to show up in it. `onAdded` reports whether that remount was
-            // possible; when it is not, the copy says how to get there by hand.
-            const remounted = typeof onAdded === 'function' && onAdded() === true
+            // write to show up in it. `onAdded` answers whether the card now really
+            // lists those ids; its own verification is what keeps this copy honest,
+            // because a remount that ran too early looks identical from here.
+            let remounted = false
+            if (typeof onAdded === 'function') {
+              try {
+                remounted = (await onAdded(profiles.map((profile) => profile.id))) === true
+              } catch (_remountFailure) {
+                remounted = false
+              }
+            }
             setWrite({
               status: 'added',
               message: remounted
@@ -1401,8 +1510,9 @@ window.__ModuleLoader__.load({
         loadPanel,
         addModels,
         // The card this modal was opened from is the row's editing card; remounting
-        // it is what makes the freshly written models visible in its list.
-        onAdded: () => refreshProviderEditor(nativeButton),
+        // it is what makes the freshly written models visible in its list. The ids
+        // travel with the ask so the remount can check its own work.
+        onAdded: (addedIds) => refreshProviderEditor(nativeButton, addedIds),
       })
 
       /**
@@ -2067,7 +2177,9 @@ window.__ModuleLoader__.load({
       CAPABILITY_TAGS,
       TAKEOVER_LABELS,
       EDIT_LABELS,
+      MODEL_ID_LABELS,
       refreshProviderEditor,
+      cardModelIds,
       isTakeoverLabel,
       MARKER_ATTR,
       pathGet,

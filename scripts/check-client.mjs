@@ -375,29 +375,91 @@ check(
 // The deferral matters as much as the click count: collapse is a state update, so
 // re-reading `open` inside the same click expands nothing. The sandbox's
 // setTimeout runs synchronously, which is what makes both clicks observable here.
+//
+// And the remount has to VERIFY itself, because the list it re-seeds from is
+// React's, which the write reaches asynchronously: an expand that runs too early
+// re-seeds the pre-write list and looks exactly like success. Every case below
+// therefore drives the ids the card reports, not just the clicks it received.
 {
-  const clicks = []
-  const toggle = { textContent: '编辑', click: () => { clicks.push('toggle') } }
-  const row = { querySelectorAll: (selector) => (selector === 'button' ? [toggle] : []) }
-  const native = { closest: (selector) => (selector === 'li' ? row : null) }
+  const toggleWith = (clicks) => ({ textContent: '编辑', click: () => { clicks.push('toggle') } })
+  const idInputsWith = (ids) => ids.map((id) => ({ getAttribute: () => '模型 ID 1', value: id }))
+  /** One provider row: a toggle, the ids it currently lists, and its fold. */
+  const rowWith = (row) => ({
+    querySelectorAll: (selector) => {
+      if (selector === 'button') return [toggleWith(row.clicks)]
+      if (selector === 'input') return idInputsWith(row.ids())
+      return []
+    },
+    querySelector: () => row.fold,
+  })
+  const nativeFor = (row) => ({
+    closest: (selector) => {
+      row.closestCalls += 1
+      return selector === 'li' ? rowWith(row) : null
+    },
+  })
+
+  const steady = { clicks: [], closestCalls: 0, fold: { open: false }, ids: () => ['glm-5-3-flash', 'agnes-2-0-flash:free'] }
+  const refreshed = await internals.refreshProviderEditor(nativeFor(steady), ['agnes-2-0-flash:free'])
   check(
-    'the editing card is remounted by clicking its toggle twice',
-    internals.refreshProviderEditor(native) === true && clicks.length === 2,
-    `clicks=${clicks.length}`,
+    'the remount is confirmed against the ids the card lists, and the fold is reopened to show them',
+    refreshed === true && steady.clicks.length === 2 && steady.fold.open === true,
+    `clicks=${steady.clicks.length} open=${steady.fold.open}`,
   )
+  // The button that opened the picker sits INSIDE the editor, so collapsing
+  // detaches it: resolving the row again after the first click answers null and
+  // strands the card collapsed. One lookup, before any click, is the invariant.
+  check(
+    'the row is resolved once, before the click that detaches that button',
+    steady.closestCalls === 1,
+    `closest calls=${steady.closestCalls}`,
+  )
+
+  // The regression this verification exists for: the first collapse/expand lands
+  // before React re-rendered the page, so the card re-seeds the list it had
+  // BEFORE the write. Firing once and trusting the click count called that a
+  // success; the retry is what turns it into one.
+  const lagging = {
+    clicks: [],
+    closestCalls: 0,
+    fold: { open: false },
+    ids: () => (lagging.clicks.length <= 2 ? ['glm-5-3-flash'] : ['glm-5-3-flash', 'agnes-2-0-flash:free']),
+  }
+  const retried = await internals.refreshProviderEditor(nativeFor(lagging), ['agnes-2-0-flash:free'])
+  check(
+    'a card that re-seeds the pre-write list is retried until it agrees',
+    retried === true && lagging.clicks.length === 4,
+    `clicks=${lagging.clicks.length}`,
+  )
+
+  const hopeless = { clicks: [], closestCalls: 0, fold: { open: false }, ids: () => ['glm-5-3-flash'] }
+  const never = await internals.refreshProviderEditor(nativeFor(hopeless), ['agnes-2-0-flash:free'])
+  check(
+    'a list that never agrees reports the refresh as not done, so the copy can say so',
+    never === false && hopeless.fold.open === false,
+    `clicks=${hopeless.clicks.length} open=${hopeless.fold.open}`,
+  )
+
   check(
     'a row without that toggle fails open instead of throwing',
-    internals.refreshProviderEditor({ closest: () => ({ querySelectorAll: () => [] }) }) === false
-    && internals.refreshProviderEditor({ closest: () => null }) === false
-    && internals.refreshProviderEditor({}) === false
-    && internals.refreshProviderEditor(null) === false
-    && internals.refreshProviderEditor(undefined) === false,
+    (await internals.refreshProviderEditor({ closest: () => ({ querySelectorAll: () => [] }) }, ['x'])) === false
+    && (await internals.refreshProviderEditor({ closest: () => null })) === false
+    && (await internals.refreshProviderEditor({})) === false
+    && (await internals.refreshProviderEditor(null)) === false
+    && (await internals.refreshProviderEditor(undefined)) === false,
   )
   check(
     'the toggle labels cover both locales dsh ships',
     internals.EDIT_LABELS.length === 2
     && internals.EDIT_LABELS.indexOf('编辑') !== -1
     && internals.EDIT_LABELS.indexOf('Edit') !== -1,
+  )
+  check(
+    'the model-id field labels cover both locales dsh ships',
+    internals.MODEL_ID_LABELS.length === 2
+    && internals.MODEL_ID_LABELS.indexOf('模型 ID') !== -1
+    && internals.MODEL_ID_LABELS.indexOf('Model ID') !== -1
+    && internals.cardModelIds(rowWith(steady)).join(',') === 'glm-5-3-flash,agnes-2-0-flash:free',
   )
 }
 
