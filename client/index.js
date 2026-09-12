@@ -1608,8 +1608,54 @@ window.__ModuleLoader__.load({
      * @param agrees - reads the ids the card now lists and answers whether the change is on screen.
      * @returns whether the card ever agreed.
      */
+    /**
+     * Every scroller above one node, with where each is scrolled to.
+     *
+     * Recorded because a remount collapses the card first, and a collapse shortens
+     * the page: the browser clamps a scroller's `scrollTop` to the shorter content
+     * the moment it shrinks, so by the time the card is expanded again the position
+     * is already gone. Reading it before the first click is the only way to put it
+     * back.
+     * @param node - the element the card's scrolling is measured from.
+     * @returns the positions, in the order they were found.
+     */
+    function scrollMarksOf(node) {
+      const marks = []
+      let parent = node === null || node === undefined ? null : node.parentElement
+      while (parent !== null && parent !== undefined) {
+        if (typeof parent.scrollTop === 'number'
+          && (parent.scrollTop > 0 || parent.scrollHeight > parent.clientHeight)) {
+          marks.push({ node: parent, top: parent.scrollTop, left: parent.scrollLeft })
+        }
+        parent = parent.parentElement
+      }
+      const root = typeof document === 'undefined' ? null : document.scrollingElement
+      if (root !== null && root !== undefined && typeof root.scrollTop === 'number') {
+        marks.push({ node: root, top: root.scrollTop, left: root.scrollLeft })
+      }
+      return marks
+    }
+
+    /**
+     * Put every recorded scroller back where it was.
+     *
+     * Called after the card has been expanded again, and again after the fold is
+     * re-opened: the fold changes the height too, so restoring before that would
+     * be clamped all over again.
+     * @param marks - what {@link scrollMarksOf} returned.
+     */
+    function restoreScroll(marks) {
+      for (let at = 0; at < marks.length; at += 1) {
+        const mark = marks[at]
+        if (typeof mark.node.scrollTop !== 'number') continue
+        mark.node.scrollTop = mark.top
+        mark.node.scrollLeft = mark.left
+      }
+    }
+
     async function remountEditorWhile(row, agrees) {
       const wasOpen = editorMounted(row)
+      const marks = scrollMarksOf(row)
       let agreed = false
       for (let attempt = 0; attempt < REFRESH_ATTEMPTS && !agreed; attempt += 1) {
         const toggle = editToggleOf(row)
@@ -1626,8 +1672,12 @@ window.__ModuleLoader__.load({
         const shown = cardModelIds(row)
         if (shown === null) break
         agreed = agrees(shown)
+        restoreScroll(marks)
       }
       await leaveEditorOpen(row, wasOpen)
+      // After the fold, not before: re-opening it changes the height too, and a
+      // position restored under it would be clamped a second time.
+      restoreScroll(marks)
       return agreed
     }
 
@@ -2926,6 +2976,8 @@ window.__ModuleLoader__.load({
       patchModels,
       footerOf,
       syncFooterVisibility,
+      scrollMarksOf,
+      restoreScroll,
       isRemoveLabel,
       removalRowOf,
       withoutModel,

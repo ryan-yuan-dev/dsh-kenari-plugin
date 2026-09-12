@@ -670,6 +670,36 @@ check(
   )
 }
 
+// A remount collapses the card, and shortening the page clamps every scroller above
+// it — so the position has to be read before the first click and written back after
+// the last one. Recorded ones only: touching a scroller that is not scrolled (and
+// may not even be one) would fight the browser's own layout.
+{
+  const outer = { scrollTop: 120, scrollLeft: 4, scrollHeight: 900, clientHeight: 400, parentElement: null }
+  const inner = { scrollTop: 0, scrollLeft: 0, scrollHeight: 300, clientHeight: 300, parentElement: outer }
+  const card = { parentElement: inner }
+  const marks = internals.scrollMarksOf(card)
+  check(
+    'only the scrolled ancestors of the card are recorded',
+    marks.length === 1 && marks[0].node === outer && marks[0].top === 120,
+    `marks=${marks.length}`,
+  )
+  outer.scrollTop = 0
+  outer.scrollLeft = 0
+  internals.restoreScroll(marks)
+  check(
+    'the recorded position is put back',
+    outer.scrollTop === 120 && outer.scrollLeft === 4,
+    `top=${outer.scrollTop} left=${outer.scrollLeft}`,
+  )
+  check(
+    'a card with nothing scrollable above it records nothing',
+    internals.scrollMarksOf(null).length === 0
+    && internals.scrollMarksOf({ parentElement: { scrollTop: 0, scrollHeight: 10, clientHeight: 10, parentElement: null } }).length === 0
+    && internals.restoreScroll([]) === undefined,
+  )
+}
+
 // cardWithMarker walks from a button up to the first ancestor holding the
 // marker. The negative case is the one that matters: another provider's card
 // must not be claimed, because the native editor is that card's only writer.
