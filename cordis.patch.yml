@@ -106,28 +106,29 @@
           # `name` 填 dsh 模型目录里的「显示名称」（不填就是空框），`maxTokens` 填每请求
           # 输出上限（不填则整条路由共用 pi-ai 的 defaultMaxTokens 32768）。两者都由
           # catalog.ts 的 displayNameOf / recommendedMaxTokens 推导——写模型时用的是同一套
-          # 规则，所以手动加的和这里预置的取值口径一致。窗口的 1/4 夹在 [8192, 65536]，
+          # 规则，所以手动加的和这里预置的取值口径一致（显示名统一带 `Kenari ` 前缀，
+          # 与官方 DeepSeek 的同名模型区分开）。窗口的 1/4 夹在 [8192, 65536]，
           # 这四个的窗口都是 ~1M，所以都取到上限。
           - id: deepseek-v4-flash
-            name: DeepSeek v4 Flash
+            name: Kenari DeepSeek v4 Flash
             contextWindow: 1048576
             maxTokens: 65536
             input: [text]
             reasoningEfforts: { low: low, high: high, max: max }
           - id: glm-5-3-flash
-            name: GLM 5.3 Flash
+            name: Kenari GLM 5.3 Flash
             contextWindow: 1000000
             maxTokens: 65536
             input: [text, image]
             reasoningEfforts: { low: low, high: high, max: max }
           - id: gpt-5-6-luna
-            name: GPT 5.6 Luna
+            name: Kenari GPT 5.6 Luna
             contextWindow: 872000
             maxTokens: 65536
             input: [text, image]
             reasoningEfforts: { off: none, low: low, medium: medium, high: high, xhigh: xhigh, max: max }
           - id: mimo-v2-5
-            name: MiMo v2.5
+            name: Kenari MiMo v2.5
             contextWindow: 1050000
             maxTokens: 65536
             input: [text, image]

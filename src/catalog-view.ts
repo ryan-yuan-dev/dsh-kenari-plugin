@@ -41,6 +41,9 @@ interface ModelView {
    * 目录里只有 8 个模型带 `name`，其余 70 多个要按 id 还原（见 `displayNameOf`）。
    * 若这里原样透传，无名模型的 `name` 就等于 id，界面把 id 印两遍；而同一个模型的
    * `profile.name` 又已经是派生名——同一份数据里两个口径，改这里就是为了消掉它。
+   *
+   * 给的是最终展示名（含路由前缀），与写进路由的 `profile.name` 完全一致：这一列的意义
+   * 就是"dsh 会印成什么"，两处不一致时该信的是 dsh 那边。
    */
   name: string
   ownedBy?: string

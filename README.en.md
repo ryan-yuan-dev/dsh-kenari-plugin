@@ -60,14 +60,14 @@ When the plan cannot be read (no key, a share-page key that gets 403, an account
 
 | Model id | Display name | Context | Max output | Notes |
 | --- | --- | --- | --- | --- |
-| `deepseek-v4-flash` | DeepSeek v4 Flash | 1M | 64K | reasoning low/high/max |
-| `glm-5-3-flash` | GLM 5.3 Flash | 1M | 64K | vision, reasoning low/high/max |
-| `gpt-5-6-luna` | GPT 5.6 Luna | 872k | 64K | vision + PDF, 6 reasoning levels |
-| `mimo-v2-5` | MiMo v2.5 | 1.05M | 64K | vision + audio + video |
+| `deepseek-v4-flash` | Kenari DeepSeek v4 Flash | 1M | 64K | reasoning low/high/max |
+| `glm-5-3-flash` | Kenari GLM 5.3 Flash | 1M | 64K | vision, reasoning low/high/max |
+| `gpt-5-6-luna` | Kenari GPT 5.6 Luna | 872k | 64K | vision + PDF, 6 reasoning levels |
+| `mimo-v2-5` | Kenari MiMo v2.5 | 1.05M | 64K | vision + audio + video |
 
 None of the four is free, so **a new account with no balance hits 402 on its first session**. Add a `:free` model or top up first. `:free` models stay out of the route by default; filter by "free" in the picker to add them.
 
-Display names and output caps are derived by the plugin, since the catalog publishes neither. A name is reconstructed from the id, and the output cap is a quarter of the context window, clamped to [1K, 64K]; models without a published window get no cap field. The name is presentation only.
+Display names and output caps are derived by the plugin, since the catalog publishes neither. A name is reconstructed from the id (the few models whose catalog entry carries a `name` keep the vendor's wording), then prefixed with `Kenari ` — dsh's model button and session header show the display name alone, so without the prefix a Kenari route is indistinguishable from an official DeepSeek model of the same name. The output cap is a quarter of the context window, clamped to [1K, 64K]; models without a published window get no cap field. The name is presentation only; a model's identity is always its id.
 
 Once you edit the list yourself, your config replaces the preset as a whole (pi-ai's semantics) and the plugin stops touching it.
 
@@ -108,17 +108,17 @@ The `available()` contract forbids network calls, so a Kenari outage only surfac
 
 A failed session model call on a Kenari route recovers on its own:
 
-1. Retry 5 times at a fixed 5 second interval. dsh's own `dsh-llm-retry` does this and leaves an `llm/retry` record
+1. Retry 5 times at a fixed 5 second interval **on the same route**, with the budget counted per route
 2. When retries run out, switch to a model with at least as large a window, preferring the smallest adequate one in the same provider before crossing providers
 3. If that also fails, fall back to dsh's default provider and model
 
-Only when all three fail does the turn error out. Retry and switching happen inside the same step, so the task is never interrupted and the plugin sends no "continue" message. A switched model does not inherit `reasoningEffort` (levels are per model); the switch injects a notice you can disable with `modelSwitchNoticeEnabled`, and picking a model yourself with `/model` clears the automatic switch.
+Only when all three fail does the turn error out. Retry and switching happen inside the same step, so the task is never interrupted and the plugin sends no "continue" message. A switched model does not inherit `reasoningEffort` (levels are per model); the switch injects a notice you can disable with `modelSwitchNoticeEnabled`, and the start of a retry sequence injects one too (during retries the UI shows a single failed attempt, so an unexplained wait is worse), which `modelRetryNoticeEnabled` disables. Picking a model yourself with `/model` clears the automatic switch.
 
 `CONTEXT_WINDOW_EXCEEDED` is deliberately not retryable. Retrying the same context on the same model can only fail again, so it goes straight to the model switch, which is often where recovery works.
 
 Two limits:
 
-- **Retry timing on the `llm-pi-ai` route comes from `providers.kenari.retryPolicy` in `cordis.patch.yml`, not from the plugin config.** dsh freezes a route's retry policy when the adapter registers, and the plugin cannot change it. The defaults match the plugin config, so change both together.
+- **Retrying is done by the plugin's own recovery state machine; dsh's `dsh-llm-retry` is deliberately switched off on Kenari routes** (`providers.kenari.retryPolicy.maxRetries: 0` in `cordis.patch.yml`, same for the plugin's own adapter). The reason is that it **fails silently**: `agent/request-error` has no default behaviour, so a listener that does not call `next()` vetoes everything after it, and the plugin cannot observe whether a live reload reordered that chain. Measured on a live session: zero `llm/retry` events and the model switch happened on the first failure — the promised retries never ran. There is therefore exactly one source for the retry budget: `modelRetryMaxRetries` / `modelRetryDelayMs` / `modelRetryableCodes`. If you set that route's `retryPolicy` back above 0, the plugin steps aside and lets dsh own it, so the two never count the same retry twice (the three scenarios in `test/retry-repro.mjs` guard this boundary).
 - **A `TRANSPORT` failure may have completed and been billed on the server**, so retrying can bill twice. Narrow `modelRetryableCodes` if that matters. This is separate from the no-retry-on-timeout rule for generation endpoints.
 
 Field defaults are in "Configuration reference".
@@ -247,9 +247,10 @@ Most fields can be edited under Settings → Kenari. The ones marked (restart) b
 | `nativeProviderId` | `kenari-direct` | Route id for that adapter |
 | `modelRecoveryEnabled` | `true` | Master switch for automatic recovery |
 | `modelRecoveryProviders` | `['kenari','kenari-direct']` | Routes covered by recovery |
-| `modelRetryMaxRetries` | `5` | Extra retries (`kenari-direct`) |
+| `modelRetryMaxRetries` | `5` | Extra retries per route |
 | `modelRetryDelayMs` | `5000` | Fixed wait before each retry |
 | `modelRetryableCodes` | `EMPTY_RESPONSE` `RATE_LIMIT` `SERVER` `TIMEOUT` `TRANSPORT` | Retryable failure codes, must not be empty |
+| `modelRetryNoticeEnabled` | `true` | Inject a notice when retrying starts |
 | `modelSwitchEnabled` | `true` | Whether to switch models |
 | `modelSwitchDelayMs` | `5000` | Wait before a switch or fallback |
 | `modelSwitchSkipCodes` | `AUTH` `INVALID_CREDENTIAL` `MISSING_CREDENTIAL` `QUOTA` | Codes that skip straight to the provider fallback |

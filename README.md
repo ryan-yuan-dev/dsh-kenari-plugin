@@ -60,14 +60,14 @@ KENARI_API_KEY=kn-...
 
 | 模型 id | 显示名称 | 上下文 | 最大输出 | 备注 |
 | --- | --- | --- | --- | --- |
-| `deepseek-v4-flash` | DeepSeek v4 Flash | 1M | 64K | reasoning low/high/max |
-| `glm-5-3-flash` | GLM 5.3 Flash | 1M | 64K | 视觉，reasoning low/high/max |
-| `gpt-5-6-luna` | GPT 5.6 Luna | 872k | 64K | 视觉 + PDF，6 档 reasoning |
-| `mimo-v2-5` | MiMo v2.5 | 1.05M | 64K | 视觉 + 音频 + 视频 |
+| `deepseek-v4-flash` | Kenari DeepSeek v4 Flash | 1M | 64K | reasoning low/high/max |
+| `glm-5-3-flash` | Kenari GLM 5.3 Flash | 1M | 64K | 视觉，reasoning low/high/max |
+| `gpt-5-6-luna` | Kenari GPT 5.6 Luna | 872k | 64K | 视觉 + PDF，6 档 reasoning |
+| `mimo-v2-5` | Kenari MiMo v2.5 | 1.05M | 64K | 视觉 + 音频 + 视频 |
 
 四个都不是免费模型，**没有余额的新账户第一次会话会拿到 402**，先加一个 `:free` 模型或充值。`:free` 模型默认不进路由，用挑选器里的「免费」筛一下再加。
 
-显示名称与最大输出由插件推导（目录里都没有）：名称还原自 id，最大输出取窗口的 1/4 并夹在 [1K, 64K]，不公布窗口的模型不写这个字段。名称只用于展示。
+显示名称与最大输出由插件推导（目录里都没有）：名称先还原自 id（目录自己带 `name` 的那几个模型照抄厂商写法），再统一加 `Kenari ` 前缀——dsh 的模型按钮和会话头部只有展示名一个字段，不带前缀就分不出它是 Kenari 路由还是官方 DeepSeek 的同名模型；最大输出取窗口的 1/4 并夹在 [1K, 64K]，不公布窗口的模型不写这个字段。名称只用于展示，模型身份始终是 id。
 
 你手动改过列表之后，用户配置整份覆盖预设（pi-ai 的语义），插件不再改。
 
@@ -108,17 +108,17 @@ Kenari 有三条线，base URL 形状不同，写错返回 405 而不是 404：
 
 Kenari 路由上的会话模型调用失败后自动恢复：
 
-1. 按固定 5 秒间隔重试 5 次，由 dsh 自带的 `dsh-llm-retry` 执行，会话里留 `llm/retry` 记录
+1. 按固定 5 秒间隔重试 5 次，**同一条路由**上重发，预算按路由计算
 2. 用尽后换一个窗口不小于当前模型的模型，先在同一个 provider 内挑最小的够用者，没有候选再跨 provider
 3. 仍失败则回退 dsh 的默认 provider 与模型
 
-三步都失败这一轮才报错。重试与换模型都在同一个 step 内，任务不中断，插件不会再发「继续」消息。换模型不继承 `reasoningEffort`（档位按模型定义），换完注入一条说明，可用 `modelSwitchNoticeEnabled` 关掉；手动 `/model` 会清除自动切换。
+三步都失败这一轮才报错。重试与换模型都在同一个 step 内，任务不中断，插件不会再发「继续」消息。换模型不继承 `reasoningEffort`（档位按模型定义），换完注入一条说明，可用 `modelSwitchNoticeEnabled` 关掉；重试开始时也会注入一条说明（重试期间界面上只有一次失败的尝试，不解释就是一个没有理由的等待），可用 `modelRetryNoticeEnabled` 关掉。手动 `/model` 会清除自动切换。
 
 `CONTEXT_WINDOW_EXCEEDED` 刻意不在可重试集里：同模型同上下文重试必然再失败，直接进换模型阶段，而这一步往往正是恢复生效的地方。
 
 两处限制：
 
-- **`llm-pi-ai` 路由的重试参数取自 `cordis.patch.yml` 的 `providers.kenari.retryPolicy`，不是插件配置。** dsh 在适配器注册时就冻结了路由的重试策略，插件改不了。默认值与插件配置一致，改一个记得改另一个。
+- **重试由插件自己的恢复状态机执行，Kenari 路由上 dsh 自带的 `dsh-llm-retry` 被刻意关掉**（`cordis.patch.yml` 里 `providers.kenari.retryPolicy.maxRetries: 0`，插件自带适配器同理）。原因是它**会静默失效**：`agent/request-error` 是没有默认行为的瀑布，不调用 `next()` 的监听器会否决它后面的一切，而插件无法观察自己的注册顺序有没有被 live reload 之类的动作翻过来。实测线上会话里 `llm/retry` 事件数为 0、换模型发生在第一次失败上，承诺的重试从未执行。因此重试的预算只有一个来源：`modelRetryMaxRetries` / `modelRetryDelayMs` / `modelRetryableCodes`。如果你把该路由的 `retryPolicy` 改回大于 0，插件会在这条路由上让位给 dsh，两条机制不会各数一遍（`test/retry-repro.mjs` 的三个场景守着这条边界）。
 - **`TRANSPORT` 类失败在服务端可能已经完成并计费**，重试会重复扣费。介意就把 `modelRetryableCodes` 调小。这与生成类端点的「超时不重试」是两回事。
 
 字段与默认值见「配置项」。
@@ -247,9 +247,10 @@ dsh plugin --profile web remove dsh-kenari-plugin
 | `nativeProviderId` | `kenari-direct` | 自带适配器的路由 id |
 | `modelRecoveryEnabled` | `true` | 失败自动恢复总开关 |
 | `modelRecoveryProviders` | `['kenari','kenari-direct']` | 参与恢复的路由 |
-| `modelRetryMaxRetries` | `5` | 额外重试次数（`kenari-direct`） |
+| `modelRetryMaxRetries` | `5` | 每条路由的额外重试次数 |
 | `modelRetryDelayMs` | `5000` | 每次重试前的固定等待 |
 | `modelRetryableCodes` | `EMPTY_RESPONSE` `RATE_LIMIT` `SERVER` `TIMEOUT` `TRANSPORT` | 可重试的失败码，不能为空 |
+| `modelRetryNoticeEnabled` | `true` | 开始重试时注入通知 |
 | `modelSwitchEnabled` | `true` | 是否换模型 |
 | `modelSwitchDelayMs` | `5000` | 换模型或回退前的等待 |
 | `modelSwitchSkipCodes` | `AUTH` `INVALID_CREDENTIAL` `MISSING_CREDENTIAL` `QUOTA` | 跳过同 provider 换模型，直接回退 |
