@@ -1,6 +1,6 @@
 {
   "name": "dsh-kenari-plugin",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Kenari (kenari.id) as a first-class citizen of DeepSeek Harness: session models, web search/fetch provider with fallback, and REST capability tools.",
   "license": "MIT",
   "repository": {
