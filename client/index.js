@@ -964,6 +964,13 @@ window.__ModuleLoader__.load({
         const button = target.closest('button')
         if (button === null) return
         const label = typeof button.textContent === 'string' ? button.textContent.trim() : ''
+        // dsh's own 编辑 toggle, riding along on this listener because the fold it
+        // mounts is where this plugin's entry points live. Nothing is prevented or
+        // stopped here: the click has to reach dsh for the card to open at all.
+        if (EDIT_LABELS.indexOf(label) !== -1) {
+          if (cardWithMarker(button) !== null) void revealEditorFoldSoon()
+          return
+        }
         if (!isTakeoverLabel(label)) return
         if (cardWithMarker(button) === null) return
         event.preventDefault()
@@ -1054,6 +1061,87 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The folds this bundle has already revealed, one entry per editor mount.
+     *
+     * React re-creates the `<details>` every time the card reopens, so a fresh
+     * element is revealed again while the one a user collapsed by hand is left
+     * alone — the memory has to be per element, not per card.
+     */
+    const revealedFolds = new WeakSet()
+
+    /**
+     * Open one card's 自定义设置 fold, once per element.
+     *
+     * Why it is needed: that fold holds the model list AND the two buttons this
+     * plugin takes over, and dsh renders it closed. A card opened by hand
+     * therefore buries the list — and this plugin's way in — one click deep,
+     * every single time. Opening it as the editor appears is what makes the
+     * models visible on the spot.
+     *
+     * Once per element, deliberately: the user's collapse is theirs to make, and
+     * re-opening it on every mutation would fight them out of the control.
+     * @param card - the provider's card element, or null.
+     */
+    function revealFoldOf(card) {
+      if (card === null || card === undefined || typeof card.querySelector !== 'function') return
+      const fold = card.querySelector('details')
+      if (fold === null || fold === undefined) return
+      if (revealedFolds.has(fold)) return
+      revealedFolds.add(fold)
+      fold.open = true
+    }
+
+    /** Reveal the mounted Kenari card's fold; a no-op while no card is on screen. */
+    function revealEditorFold() {
+      revealFoldOf(markedCard())
+    }
+
+    /**
+     * Reveal the fold of the editor a click just toggled.
+     *
+     * The card's own 编辑 toggle is dsh's button, so the editor it mounts does
+     * not exist yet when the click is handled: the reveal is retried across one
+     * paint. A toggle that closed the card instead finds no fold and does
+     * nothing, which is what keeps a hand-collapsed fold from snapping back.
+     * @returns settlement after both reveal attempts.
+     */
+    async function revealEditorFoldSoon() {
+      revealEditorFold()
+      await afterPaint()
+      revealEditorFold()
+    }
+
+    /** Whether the card's editor is mounted right now. */
+    function editorMounted(row) {
+      return row !== null
+        && row !== undefined
+        && typeof row.querySelector === 'function'
+        && row.querySelector('details') !== null
+    }
+
+    /**
+     * Leave one card open, with its model list unfolded.
+     *
+     * Called after a remount, including a remount whose list never agreed: the
+     * user opened this picker from an expanded card, and collapsing it would
+     * hide the very list the dialog's copy is talking about. Re-open is a click
+     * on the same toggle (the card is only ever closed by one), and the fold is
+     * re-opened because the remount re-creates it closed.
+     * @param row - the provider's list item.
+     * @returns settlement after the card has been re-opened.
+     */
+    async function leaveEditorOpen(row) {
+      if (!editorMounted(row)) {
+        const toggle = editToggleOf(row)
+        if (toggle !== null && typeof toggle.click === 'function') {
+          toggle.click()
+          await afterPaint()
+        }
+      }
+      openEditorFold(row)
+    }
+
+    /**
      * Re-mount the editing card this bundle's picker was opened from, and report
      * success only once its list actually lists what was just written.
      *
@@ -1076,7 +1164,9 @@ window.__ModuleLoader__.load({
      *
      * Fail-open — no toggle found (a dsh release renamed it), or a list that never
      * agrees, returns false and the caller falls back to the copy that names the
-     * manual way.
+     * manual way. Either way the card is left open with its fold unfolded: the
+     * user came here from an expanded card, so a collapsed one would hide both
+     * the list and the copy talking about it.
      * @param button - the native button the takeover intercepted.
      * @param addedIds - the model ids the card's list must contain to count as refreshed.
      * @returns whether the card now lists every added id.
@@ -1090,9 +1180,10 @@ window.__ModuleLoader__.load({
       // keys it by provider and only the editor inside it comes and goes.
       const row = button.closest('li')
       if (row === null || row === undefined) return false
-      for (let attempt = 0; attempt < REFRESH_ATTEMPTS; attempt += 1) {
+      let refreshed = false
+      for (let attempt = 0; attempt < REFRESH_ATTEMPTS && !refreshed; attempt += 1) {
         const toggle = editToggleOf(row)
-        if (toggle === null || typeof toggle.click !== 'function') return false
+        if (toggle === null || typeof toggle.click !== 'function') break
         toggle.click()
         // The second click must land after React commits the first: collapse is a
         // state update, and re-reading `open` inside the same click would expand
@@ -1103,13 +1194,11 @@ window.__ModuleLoader__.load({
         if (again !== null && typeof again.click === 'function') again.click()
         await afterPaint()
         const shown = cardModelIds(row)
-        if (shown === null) return false
-        if (wanted.every((id) => shown.indexOf(id) !== -1)) {
-          openEditorFold(row)
-          return true
-        }
+        if (shown === null) break
+        refreshed = wanted.every((id) => shown.indexOf(id) !== -1)
       }
-      return false
+      await leaveEditorOpen(row)
+      return refreshed
     }
 
     /**
@@ -2180,6 +2269,7 @@ window.__ModuleLoader__.load({
       MODEL_ID_LABELS,
       refreshProviderEditor,
       cardModelIds,
+      revealFoldOf,
       isTakeoverLabel,
       MARKER_ATTR,
       pathGet,

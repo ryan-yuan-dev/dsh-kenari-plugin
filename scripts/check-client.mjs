@@ -436,9 +436,48 @@ check(
   const never = await internals.refreshProviderEditor(nativeFor(hopeless), ['agnes-2-0-flash:free'])
   check(
     'a list that never agrees reports the refresh as not done, so the copy can say so',
-    never === false && hopeless.fold.open === false,
+    never === false && hopeless.fold.open === true && hopeless.clicks.length === 16,
     `clicks=${hopeless.clicks.length} open=${hopeless.fold.open}`,
   )
+
+  // The write is not allowed to end with the card closed either: the user opened
+  // this picker from an expanded card, so a stale list is still better shown than
+  // hidden. `fold: null` is how a collapsed card reads here.
+  const collapsed = { clicks: [], closestCalls: 0, fold: null, ids: () => ['glm-5-3-flash'] }
+  const reopened = await internals.refreshProviderEditor(nativeFor(collapsed), ['agnes-2-0-flash:free'])
+  check(
+    'a card the last attempt left closed is re-opened, not abandoned',
+    reopened === false && collapsed.clicks.length === 17,
+    `clicks=${collapsed.clicks.length}`,
+  )
+
+  // dsh renders 自定义设置 closed and keeps the model list inside it, so a card
+  // opened by hand buries both the list and this plugin's buttons one click deep.
+  // The reveal is per `<details>`: React re-creates that element whenever the
+  // card reopens, so a reopened card is revealed again while one the user
+  // collapsed by hand stays collapsed.
+  {
+    const fold = { open: false }
+    const card = { querySelector: () => fold }
+    internals.revealFoldOf(card)
+    const onAppear = fold.open
+    fold.open = false
+    internals.revealFoldOf(card)
+    const afterUserCollapse = fold.open
+    const remounted = { open: false }
+    internals.revealFoldOf({ querySelector: () => remounted })
+    check(
+      'the model list is unfolded as the card appears, once per <details> element',
+      onAppear === true && afterUserCollapse === false && remounted.open === true,
+      `onAppear=${onAppear} afterUserCollapse=${afterUserCollapse} remounted=${remounted.open}`,
+    )
+    check(
+      'a card with no fold, or no card, is a no-op',
+      internals.revealFoldOf(null) === undefined
+      && internals.revealFoldOf({}) === undefined
+      && internals.revealFoldOf({ querySelector: () => null }) === undefined,
+    )
+  }
 
   check(
     'a row without that toggle fails open instead of throwing',
