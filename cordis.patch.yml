@@ -105,10 +105,10 @@
         models:
           # `name` 填 dsh 模型目录里的「显示名称」（不填就是空框），`maxTokens` 填每请求
           # 输出上限（不填则整条路由共用 pi-ai 的 defaultMaxTokens 32768）。两者都由
-          # catalog.ts 的 displayNameOf / recommendedMaxTokens 推导——写模型时用的是同一套
-          # 规则，所以手动加的和这里预置的取值口径一致（显示名统一带 `Kenari ` 前缀，
-          # 与官方 DeepSeek 的同名模型区分开）。窗口的 1/4 夹在 [8192, 65536]，
-          # 这四个的窗口都是 ~1M，所以都取到上限。
+          # catalog.ts 的 toModelProfile 推导——写模型时用的是同一套规则，所以手动加的
+          # 和这里预置的取值口径一致。写进路由的名字一律带 `Kenari ` 前缀（前缀只加在
+          # 路由条目上，插件自己那页的模型表不加），与官方 DeepSeek 的同名模型区分开。
+          # 窗口的 1/4 夹在 [8192, 65536]，这四个的窗口都是 ~1M，所以都取到上限。
           - id: deepseek-v4-flash
             name: Kenari DeepSeek v4 Flash
             contextWindow: 1048576

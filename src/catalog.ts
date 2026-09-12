@@ -209,35 +209,30 @@ function slugToDisplayName(id: string): string {
 }
 
 /**
- * 展示名统一带的路由前缀。
+ * 写进路由的模型名统一带的路由前缀。
  *
- * dsh 只在 `/` 模型菜单里印所属 provider，composer 的模型按钮、会话头部这些位置只有
- * 展示名一个字段，而 Kenari 与官方 DeepSeek 存在同名模型（`deepseek-v4-1-flash` 两边
- * 都有），不写前缀就分不出当前用的是哪条路由。
+ * 只加在**路由条目**上（{@link toModelProfile} 的 `name`）：那是 dsh 印模型名的地方，
+ * 而 dsh 只在 `/` 模型菜单里印所属 provider，composer 的模型按钮与会话头部只有展示名
+ * 一个字段 —— Kenari 与官方 DeepSeek 存在同名模型（`deepseek-v4-1-flash` 两边都有），
+ * 不写前缀就分不出当前用的是哪条路由。
+ *
+ * 插件自己那一页的模型表不加：它整页都在 Kenari 节里，每行再写一遍 Kenari 是噪音。
  */
 export const DISPLAY_NAME_PREFIX = 'Kenari '
 
 /**
- * 一个模型**自己的**名字：目录给了 `name` 就用它，否则按 id 还原。
+ * 一个模型自己的名字：目录给了 `name` 就用它，否则按 id 还原。
  *
  * 目录里只有 8 个模型自带 `name`，而且**都不是会话模型**（语音、图像、视频那几个），
  * 所以会话模型的名字必须能从 id 还原。这里的推导不是猜：Kenari 给出 `name` 的那 8 个
  * 模型与本函数的输出**逐字一致**（Veo 3.1 Lite、MiniMax Speech 2.8 Turbo、
  * Nano Banana Pro…），`test/catalog-view.mjs` 用它们反测。
- */
-export function kenariNameOf(model: KenariModel): string {
-  const named = typeof model.name === 'string' ? model.name.trim() : ''
-  return named.length > 0 ? named : slugToDisplayName(model.id)
-}
-
-/**
- * 一个模型的展示名：{@link DISPLAY_NAME_PREFIX} + {@link kenariNameOf}。
  *
- * dsh 的「显示名称」是纯展示字段（不参与请求），所以还原值即使不完美也只是可改的默认值。
- * 前缀是这一层唯一的加工：模型身份始终是 id，加前缀不动请求、也不动任何按 id 的比较。
+ * 名字原样给：要写进路由时由 {@link toModelProfile} 加前缀，两处口径不同是故意的。
  */
 export function displayNameOf(model: KenariModel): string {
-  return DISPLAY_NAME_PREFIX + kenariNameOf(model)
+  const named = typeof model.name === 'string' ? model.name.trim() : ''
+  return named.length > 0 ? named : slugToDisplayName(model.id)
 }
 
 /**
@@ -274,8 +269,11 @@ export function recommendedMaxTokens(contextWindow: number | undefined): number 
  * 字段必须逐个来自目录：pi-ai 的 schema 会拒绝多余或拼错的键。
  *
  * `name` 与 `maxTokens` 都写：前者是 dsh 模型目录里那个「显示名称」框（不写就空着），
- * 后者是每请求输出上限（不写则整条路由共用 pi-ai 的 `defaultMaxTokens` 32768，
+ * 后者是每请求输出上限（不写则整条路由共用 pi-ai 的 defaultMaxTokens 32768，
  * 于是每个模型看到的都是同一个数）。两者的推导见上面两个函数。
+ *
+ * `name` 是**唯一**带路由前缀的地方：这条 profile 写进 `llm-pi-ai` 之后，就是 dsh 的
+ * 模型按钮、会话头部与 `/` 菜单印出来的字符串。
  */
 export function toModelProfile(model: KenariModel): {
   id: string
@@ -292,7 +290,7 @@ export function toModelProfile(model: KenariModel): {
   const maxTokens = recommendedMaxTokens(contextWindow)
   return {
     id: model.id,
-    name: displayNameOf(model),
+    name: DISPLAY_NAME_PREFIX + displayNameOf(model),
     ...(contextWindow === undefined ? {} : { contextWindow }),
     ...(maxTokens === undefined ? {} : { maxTokens }),
     input: inputModalitiesOf(model),
