@@ -34,6 +34,20 @@ dsh --profile web
 
 要固定版本就在包名后加，例如 `dsh-kenari-plugin@0.1.1`。改插件源码时换成 clone 安装：`pnpm install && pnpm build`，再 `dsh plugin --profile web add "$PWD"`，之后改源码只需重新 `pnpm build`。
 
+## 升级
+
+同一条 `add` 命令，带上版本号就是升级：
+
+```sh
+dsh plugin --profile web add dsh-kenari-plugin@0.2.3
+dsh --profile web --dump-config | grep -A3 dsh-kenari-plugin   # 确认换过来了
+dsh --profile web
+```
+
+装完要重启 dsh：插件的 Host 侧与客户端 bundle 都是加载时定版的。升级只替换 profile 里那一份依赖，`~/.dsh/settings.yaml` 里的模型路由、密钥引用名、会话标题这些设置都不动，所以不需要重新配。
+
+不带版本号装的是 npm 的 `latest`；`npm view dsh-kenari-plugin version` 看当前发布的版本，仓库每版都打 `vX.Y.Z` 的 tag。要退回旧版就把版本号换成旧的再 add 一次。刚发布的版本 pnpm 会自己加进 profile 的 `pnpm-workspace.yaml`（`minimumReleaseAgeExclude`），不用手动处理。
+
 ## 配置密钥
 
 在 Kenari 面板的 API keys → Create key 生成 `kn-...`（只显示一次），然后二选一：

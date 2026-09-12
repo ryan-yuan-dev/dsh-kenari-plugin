@@ -34,6 +34,20 @@ dsh --profile web
 
 To pin a version, append it to the name, for example `dsh-kenari-plugin@0.1.1`. To work on the plugin source, install from a clone instead: `pnpm install && pnpm build`, then `dsh plugin --profile web add "$PWD"`. The profile links to that directory, so after installing you only rerun `pnpm build` for source changes.
 
+## Upgrade
+
+The same `add` command upgrades, once you give it a version:
+
+```sh
+dsh plugin --profile web add dsh-kenari-plugin@0.2.3
+dsh --profile web --dump-config | grep -A3 dsh-kenari-plugin   # confirm the swap
+dsh --profile web
+```
+
+Restart dsh afterwards: both halves of the plugin, the Host side and the client bundle, are pinned at load time. An upgrade replaces only that one dependency inside the profile — the model route, key reference name and session-title settings in `~/.dsh/settings.yaml` are left alone, so there is nothing to reconfigure.
+
+Without a version you get npm's `latest`; `npm view dsh-kenari-plugin version` reports what is published and every release is tagged `vX.Y.Z` in the repository. To roll back, add the older version the same way. pnpm adds a freshly published version to the profile's `pnpm-workspace.yaml` (`minimumReleaseAgeExclude`) by itself, so that step needs no hand-holding.
+
 ## Set up your key
 
 In the Kenari dashboard, go to API keys → Create key and copy the `kn-...` value (shown once). Then either:
