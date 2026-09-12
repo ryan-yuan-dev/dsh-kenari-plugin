@@ -862,9 +862,39 @@ try {
     'the picker dialog renders its chrome, body, and footer',
     modal?.props?.title === internals.LOCALES.zh['catalog.title']
     && modal?.props?.closeLabel === internals.LOCALES.zh['catalog.close']
-    && modal?.props?.children?.props?.children === internals.LOCALES.zh['catalog.loading']
     && Array.isArray(footer?.props?.children) && footer.props.children.length === 3,
   )
+  // A first open renders the loading branch, because the catalog is a round trip
+  // away. That branch draws the toolbar and the row box, not a bare message: a
+  // one-line body measured 201px when the dialog appeared and 684px one frame
+  // later, once the catalog landed, and that growth is what a reader notices.
+  const body = modal?.props?.children
+  const parts = Array.isArray(body?.props?.children) ? body.props.children : [body?.props?.children]
+  check(
+    'the loading body keeps the toolbar, the summary slot, and the row box',
+    contains(expand(body), (el) => el.type === 'input' && el.props?.type === 'search') === true
+    && parts[1]?.props?.children === internals.LOCALES.zh['catalog.loading']
+    && parts[3]?.props?.style === internals.CATALOG_LIST_STYLE,
+    `parts=${parts.length}`,
+  )
+  check(
+    'the row box is one size whatever the dialog is showing',
+    internals.CATALOG_LIST_STYLE.minHeight === internals.CATALOG_LIST_SIZE
+    && internals.CATALOG_LIST_STYLE.maxHeight === internals.CATALOG_LIST_SIZE,
+    `${String(internals.CATALOG_LIST_STYLE.minHeight)} / ${String(internals.CATALOG_LIST_STYLE.maxHeight)}`,
+  )
+  {
+    // The box is only one size if every branch renders it. The empty branch used
+    // to return its message in place of the box, which shrank the dialog by
+    // 375px the moment a filter matched nothing — found live, after the loading
+    // branch had already been fixed.
+    const empty = internals.CatalogRows({ derived: { visible: [], known: {} }, picked: [], togglePick: () => {} })
+    check(
+      'a filter that matches nothing keeps the row box rather than shrinking the dialog',
+      empty?.props?.style === internals.CATALOG_LIST_STYLE,
+      JSON.stringify(empty?.props?.style ?? null).slice(0, 50),
+    )
+  }
   // dsh's card is sized for bare ids; this dialog's rows carry an id plus tags,
   // so it must carry the class that the injected rule widens.
   check(

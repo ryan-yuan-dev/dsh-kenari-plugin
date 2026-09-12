@@ -654,6 +654,16 @@ window.__ModuleLoader__.load({
      */
     const CHIP = { display: 'inline-block', padding: '1px 7px', borderRadius: '999px', border: '1px solid rgba(127,127,127,0.4)' }
 
+    /**
+     * The picker's row box, one size in every state.
+     *
+     * `52vh` is what keeps the card inside a short window, and the 420px ceiling
+     * is what it settles at on a tall one. Both ends are the same value: the box
+     * has to be this size while the catalog is still loading and while a filter
+     * has left three rows, or the dialog changes size under the reader's hands.
+     */
+    const CATALOG_LIST_SIZE = 'min(52vh, 420px)'
+
     const styles = {
       root: { display: 'flex', flexDirection: 'column', gap: '18px', fontSize: '13px', lineHeight: 1.6 },
       title: { margin: 0, fontSize: '15px', fontWeight: 600 },
@@ -704,7 +714,12 @@ window.__ModuleLoader__.load({
       // Rows breathe: a row is a hit target and a fact set at once, and at the
       // density of a pure data grid the tags above and below each other read as
       // one block. The inner gap separates wrapped tag lines specifically.
-      list: { maxHeight: 'min(52vh, 420px)', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px', border: '0.5px solid var(--dsw-alias-border-l4)', borderRadius: '8px', padding: '8px' },
+      //
+      // The height is fixed at both ends rather than only capped, so the box is
+      // the same size empty (the loading state) and narrow (a filter that matches
+      // three rows). A dialog that resizes while you type in its search box is the
+      // same jolt as one that resizes as it opens.
+      list: { minHeight: CATALOG_LIST_SIZE, maxHeight: CATALOG_LIST_SIZE, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px', border: '0.5px solid var(--dsw-alias-border-l4)', borderRadius: '8px', padding: '8px' },
       // The row is one non-wrapping band: checkbox, id, then the tag column.
       // `alignItems: center` therefore centers the id against the tag block,
       // and the tags wrap inside their own column instead of restarting at the
@@ -2017,8 +2032,16 @@ window.__ModuleLoader__.load({
     /** The model rows: pick box, id, then the tag column. */
     function CatalogRows(props) {
       const { derived, picked, togglePick } = props
+      // The empty message sits INSIDE the box rather than in place of it. The box
+      // holds one size in every state, and a filter that matches nothing must not
+      // shrink the dialog it is filtering — that is the same jump as the one a
+      // first open used to make, only triggered by typing instead of loading.
       if (derived.visible.length === 0) {
-        return React.createElement('p', { style: styles.notice }, t('catalog.empty'))
+        return React.createElement(
+          'div',
+          { style: styles.list },
+          React.createElement('p', { style: styles.notice }, t('catalog.empty')),
+        )
       }
       return React.createElement(
         'div',
@@ -2132,34 +2155,52 @@ window.__ModuleLoader__.load({
       )
 
       const plansError = viewPlansError(panel)
-      const body = panel.state.status === 'loading'
-        ? React.createElement('p', { style: styles.notice }, t('catalog.loading'))
-        : panel.state.status === 'error'
-          ? React.createElement(
-            React.Fragment,
-            null,
-            React.createElement('p', { style: styles.error }, t('catalog.error', { message: panel.state.message })),
-            nativeButton !== undefined
-              ? React.createElement('p', { style: { margin: 0 } }, React.createElement(
-                Button,
-                { variant: 'outline', size: 'sm', onClick: fallbackToNative },
-                t('catalog.fallback'),
-              ))
-              : null,
-          )
-          : React.createElement(
-            'div',
-            { style: styles.body },
-            React.createElement(CatalogToolbar, { panel }),
-            React.createElement(CatalogSummary, { derived: panel.derived }),
-            plansError !== undefined ? React.createElement('p', { style: styles.error }, plansError) : null,
-            React.createElement(CatalogRows, { derived: panel.derived, picked: panel.picked, togglePick: panel.togglePick }),
-            panel.routeState !== undefined && panel.routeState.writable === false
-              ? React.createElement('p', { style: styles.notice }, t('catalog.readonly'))
-              : null,
-            panel.write.status === 'added' ? React.createElement('p', { style: styles.notice }, panel.write.message) : null,
-            panel.write.status === 'error' ? React.createElement('p', { style: styles.error }, panel.write.message) : null,
-          )
+      // The loading state draws the SAME frame the ready one does — toolbar, a
+      // one-line summary, the row box — and only its text differs. A loading body
+      // that was just its message made the card measure 201px when it appeared
+      // and 684px one frame later, once the catalog arrived; that growth is the
+      // jolt a reader notices, and it is worse on a cold catalog than a warm one.
+      // Reserving the frame makes the open a single frame at the size the card
+      // then keeps.
+      //
+      // The notices are the one exception, and only because they are transient:
+      // they report a plan-fetch failure or the result of a write, and there is
+      // never one to report while the first read is still in flight.
+      const loaded = panel.state.status === 'ready'
+      const body = panel.state.status === 'error'
+        ? React.createElement(
+          React.Fragment,
+          null,
+          React.createElement('p', { style: styles.error }, t('catalog.error', { message: panel.state.message })),
+          nativeButton !== undefined
+            ? React.createElement('p', { style: { margin: 0 } }, React.createElement(
+              Button,
+              { variant: 'outline', size: 'sm', onClick: fallbackToNative },
+              t('catalog.fallback'),
+            ))
+            : null,
+        )
+        : React.createElement(
+          'div',
+          { style: styles.body },
+          React.createElement(CatalogToolbar, { panel }),
+          loaded
+            ? React.createElement(CatalogSummary, { derived: panel.derived })
+            : React.createElement('p', { style: styles.notice }, t('catalog.loading')),
+          loaded && plansError !== undefined ? React.createElement('p', { style: styles.error }, plansError) : null,
+          loaded
+            ? React.createElement(CatalogRows, { derived: panel.derived, picked: panel.picked, togglePick: panel.togglePick })
+            : React.createElement('div', { style: styles.list }),
+          loaded && panel.routeState !== undefined && panel.routeState.writable === false
+            ? React.createElement('p', { style: styles.notice }, t('catalog.readonly'))
+            : null,
+          loaded && panel.write.status === 'added'
+            ? React.createElement('p', { style: styles.notice }, panel.write.message)
+            : null,
+          loaded && panel.write.status === 'error'
+            ? React.createElement('p', { style: styles.error }, panel.write.message)
+            : null,
+        )
 
       return React.createElement(
         Modal,
@@ -3020,6 +3061,7 @@ window.__ModuleLoader__.load({
       markedCard,
       cardWithMarker,
       ModelCatalogModal,
+      CatalogRows,
       // Localization and the folded groups: a key with no translation, or a
       // "collapsed" block that opens by default, is invisible until a user
       // notices. The gate asserts both.
@@ -3030,6 +3072,11 @@ window.__ModuleLoader__.load({
       KEY_REFERENCE_FIELD,
       TOOL_ONLY_FACTS,
       MODEL_PREVIEW_COUNT,
+      CATALOG_LIST_SIZE,
+      // The gate holds the row box to one size in every state: a picker that
+      // resizes as it loads, or as a filter narrows it, is the jolt this shipped
+      // to remove.
+      CATALOG_LIST_STYLE: styles.list,
       visibleModels,
       withDisplayNames,
       formatContextWindow,
