@@ -376,6 +376,17 @@ window.__ModuleLoader__.load({
     const EDIT_LABELS = ['编辑', 'Edit']
 
     /**
+     * The card's footer pair. `apply` is dsh's own word for it — the English face
+     * says Apply, not Save — and it is these two that {@link parkFooterUnderKey}
+     * relocates and that this bundle takes over the submit half of.
+     */
+    const SUBMIT_LABELS = ['保存', 'Apply']
+    const CANCEL_LABELS = ['取消', 'Cancel']
+
+    /** The link that sends the route back to the shipped catalog. */
+    const RESET_LABELS = ['恢复默认模型', 'Restore defaults']
+
+    /**
      * The prefix of each row's model-id field, in the locales this build ships
      * (`ModelListEditor` labels them `${modelId} ${index + 1}`). Reading those
      * fields back is how the remount below proves the card it re-seeded really
@@ -396,6 +407,92 @@ window.__ModuleLoader__.load({
     const KENARI_PROVIDER = 'kenari'
 
     /**
+     * The route's own fields, matched by their exact aria-labels (the model rows
+     * use the same words with a row number appended, so only an exact match is the
+     * card-level field). `path` is the key inside the route's settings profile.
+     */
+    const CARD_FIELDS = [
+      { labels: ['显示名称', 'Display name'], path: 'displayName' },
+      { labels: ['API 地址', 'Base URL'], path: 'baseURL' },
+      { labels: ['API 协议', 'API protocol'], path: 'api' },
+    ]
+
+    /**
+     * The per-row fields, matched by `${label} ${rowNumber}`. `model` is the key
+     * inside one entry of the route's `models` array, and `capacity` marks the two
+     * magnitudes, which are edited as K/M text rather than as a number.
+     */
+    const ROW_FIELDS = [
+      { labels: ['模型 ID', 'Model ID'], model: 'id' },
+      { labels: ['显示名称', 'Display name'], model: 'name' },
+      { labels: ['上下文窗口', 'Context window'], model: 'contextWindow', capacity: true },
+      { labels: ['最大输出 token', 'Max output tokens'], model: 'maxTokens', capacity: true },
+    ]
+
+    /** The value a field is set to when the user empties it: the key leaves the profile. */
+    const UNSET = Symbol('unset')
+
+    /** The credential reference a key typed into a route with none stored lands under. */
+    const DEFAULT_KEY_REF = 'KENARI_API_KEY'
+
+    /**
+     * What an aria-label names in the Kenari card, or null when it is not a field
+     * this bundle writes.
+     *
+     * Card fields are matched exactly and rows by `label + row number`: dsh labels
+     * a row's field with the row index it renders in, which is the index this
+     * bundle's writes use too.
+     * @param label - the input's aria-label.
+     * @returns the target, or null.
+     */
+    function fieldTargetOf(label) {
+      if (typeof label !== 'string' || label.length === 0) return null
+      for (let at = 0; at < CARD_FIELDS.length; at += 1) {
+        const field = CARD_FIELDS[at]
+        if (field.labels.indexOf(label) !== -1) return { where: 'card', path: field.path }
+      }
+      // Longest label first: 显示名称 is a prefix of nothing, but 模型 ID must not
+      // claim a row whose label merely starts with it (there is none today, and
+      // the trailing-number test makes that structural rather than incidental).
+      for (let index = 0; index < ROW_FIELDS.length; index += 1) {
+        const field = ROW_FIELDS[index]
+        for (let at = 0; at < field.labels.length; at += 1) {
+          const prefix = `${field.labels[at]} `
+          if (label.indexOf(prefix) !== 0) continue
+          const number = label.slice(prefix.length)
+          if (!/^[0-9]+$/.test(number)) continue
+          const row = Number(number)
+          if (row < 1) continue
+          return { where: 'row', model: field.model, index: row - 1, capacity: field.capacity === true }
+        }
+      }
+      return null
+    }
+
+    /**
+     * A capacity field's text as the number to store, or undefined when it is not
+     * a count this card can mean.
+     *
+     * dsh spells these as K/M text and counts K as 1000 (its own hint says 256K is
+     * 256000), so the same vocabulary is parsed here rather than a second one
+     * invented. An unreadable value is left alone: the card keeps showing what the
+     * user typed, and — since dsh's own 保存 no longer runs on this card — nothing
+     * silently stores a NaN.
+     * @param text - the field's current text.
+     * @returns the count, or undefined.
+     */
+    function capacityOf(text) {
+      if (typeof text !== 'string') return undefined
+      const trimmed = text.trim()
+      if (trimmed.length === 0) return UNSET
+      const match = /^(\d+(?:\.\d+)?)\s*([KkMm]?)$/.exec(trimmed)
+      if (match === null) return undefined
+      const scale = match[2] === '' ? 1 : match[2] === 'K' || match[2] === 'k' ? 1000 : 1000000
+      const value = Number(match[1]) * scale
+      return Number.isFinite(value) && value > 0 ? value : undefined
+    }
+
+    /**
      * How many collapse/expand attempts the remount gets, and how long each
      * waits for the page to paint, in milliseconds. The card is re-seeded from
      * the Models page's own settings snapshot, which React re-renders
@@ -407,11 +504,12 @@ window.__ModuleLoader__.load({
     const REFRESH_RETRY_MS = 60
 
     /**
-     * How long a burst of row deletions is collected before it is written, in
-     * milliseconds. Long enough to swallow a run of clicks on adjacent rows, short
-     * enough that a single deletion still looks immediate.
+     * How long a burst of card edits is collected before it is written, in
+     * milliseconds. Long enough to swallow a run of clicks on adjacent rows and the
+     * keystrokes of one field, short enough that a single edit still looks
+     * immediate.
      */
-    const REMOVAL_DEBOUNCE_MS = 120
+    const CARD_WRITE_DEBOUNCE_MS = 120
 
     /**
      * Whether a button's label (already trimmed) belongs to this takeover. An
@@ -974,11 +1072,39 @@ window.__ModuleLoader__.load({
      * A `disabled` button never dispatches a click at all, so the native
      * gates (adding while the editor is busy, fetching without a base URL) hold
      * here too without this function re-reading any of them.
+     *
+     * The same listener carries the two other halves of the card's live editing:
+     * `input`/`change` on its fields (each edit is written as it is made) and a
+     * click on 保存 (which, with every other field writing itself, is left holding
+     * only the API key).
      */
     function installEntryTakeover(hooks) {
       const onRemove = hooks !== null && hooks !== undefined && typeof hooks.onRemove === 'function'
         ? hooks.onRemove
         : null
+      const onField = hooks !== null && hooks !== undefined && typeof hooks.onField === 'function'
+        ? hooks.onField
+        : null
+      const onKey = hooks !== null && hooks !== undefined && typeof hooks.onKey === 'function'
+        ? hooks.onKey
+        : null
+      const onReset = hooks !== null && hooks !== undefined && typeof hooks.onReset === 'function'
+        ? hooks.onReset
+        : null
+
+      /** One field edit, read off whichever input the event came from. */
+      const onFieldEvent = (event) => {
+        if (takeoverBypassed || onField === null || !pickerChannel.mounted) return
+        const field = event.target
+        if (field === null || field === undefined || typeof field.getAttribute !== 'function') return
+        if (field.type === 'password') return
+        const target = fieldTargetOf(ariaLabelOf(field))
+        if (target === null) return
+        const card = cardWithMarker(field)
+        if (card === null) return
+        onField(card, target, typeof field.value === 'string' ? field.value : '')
+      }
+
       const onClickCapture = (event) => {
         if (takeoverBypassed || !pickerChannel.mounted) return
         const target = event.target
@@ -993,13 +1119,32 @@ window.__ModuleLoader__.load({
           if (cardWithMarker(button) !== null) void revealEditorFoldSoon()
           return
         }
+        const card = cardWithMarker(button)
+        // 恢复默认模型, and 保存: both are dsh actions this plugin takes over rather
+        // than lets run. The reset drops the route's stored array (the card then
+        // re-mounts showing the shipped presets, exactly as dsh's draft edit
+        // looked), and 保存 — which the card now shows under the key — commits the
+        // typed key, because everything else on the card has already been written.
+        if (card !== null && RESET_LABELS.indexOf(label) !== -1 && onReset !== null) {
+          event.preventDefault()
+          event.stopPropagation()
+          onReset(card)
+          return
+        }
+        if (card !== null && SUBMIT_LABELS.indexOf(label) !== -1 && onKey !== null) {
+          const input = keyInputOf(card)
+          const value = input === null || typeof input.value !== 'string' ? '' : input.value
+          event.preventDefault()
+          event.stopPropagation()
+          onKey(card, value)
+          return
+        }
         // dsh's per-row removal, taken over the same way 添加模型 is — but here the
         // click is deliberately NOT prevented, because the card has to drop the row
         // itself for the click to look immediate. What this adds is the write: the
         // stored route loses the model now instead of at 保存, so a deletion lands
         // exactly like an addition does, and the draft that dsh just edited is
         // re-seeded from the document a moment later.
-        const card = cardWithMarker(button)
         if (card !== null && onRemove !== null) {
           const removalRow = removalRowOf(button, card)
           if (removalRow !== -1) {
@@ -1016,8 +1161,12 @@ window.__ModuleLoader__.load({
         pickerChannel.open(button)
       }
       document.addEventListener('click', onClickCapture, true)
+      document.addEventListener('input', onFieldEvent, true)
+      document.addEventListener('change', onFieldEvent, true)
       return () => {
         document.removeEventListener('click', onClickCapture, true)
+        document.removeEventListener('input', onFieldEvent, true)
+        document.removeEventListener('change', onFieldEvent, true)
       }
     }
 
@@ -1081,6 +1230,60 @@ window.__ModuleLoader__.load({
         kept.push(model)
       }
       return kept
+    }
+
+    /**
+     * One route model array with the edited rows' fields applied.
+     *
+     * Each row is found by the id its card row shows, so an edit follows the row
+     * the user typed into rather than a position that may have moved. The id is
+     * also the one field whose edit erases that link — the draft then names an id
+     * the document does not have — and only that case (and only while both lists
+     * still have the same length) falls back to the row's position.
+     *
+     * Entries are copied, never rebuilt: this card edits four fields of a model
+     * and knows nothing about the rest of them, so anything it does not edit has
+     * to survive the write.
+     * @param models - the stored model entries.
+     * @param draftIds - the ids the card's rows show, or null when they cannot be read.
+     * @param rows - edited row index to the fields changed in it.
+     * @returns a new array, or the same one when nothing changed.
+     */
+    function patchModels(models, draftIds, rows) {
+      if (rows === null || rows === undefined || typeof rows.size !== 'number' || rows.size === 0) return models
+      const next = models.map((model) => (model !== null && typeof model === 'object' ? { ...model } : model))
+      let touched = false
+      for (const [index, patch] of rows) {
+        let target = -1
+        const draftId = draftIds !== null && index < draftIds.length ? draftIds[index] : undefined
+        if (typeof draftId === 'string' && draftId.length > 0) {
+          for (let at = 0; at < next.length; at += 1) {
+            const entry = next[at]
+            if (entry !== null && entry !== undefined && typeof entry === 'object' && entry.id === draftId) {
+              target = at
+              break
+            }
+          }
+        }
+        if (target === -1 && draftIds !== null && draftIds.length === next.length) target = index
+        const entry = target === -1 ? undefined : next[target]
+        if (entry === null || entry === undefined || typeof entry !== 'object') continue
+        for (const key of Object.keys(patch)) {
+          const value = patch[key]
+          if (value === UNSET) {
+            if (key in entry) {
+              delete entry[key]
+              touched = true
+            }
+            continue
+          }
+          if (entry[key] !== value) {
+            entry[key] = value
+            touched = true
+          }
+        }
+      }
+      return touched ? next : models
     }
 
     /**
@@ -1160,6 +1363,74 @@ window.__ModuleLoader__.load({
       if (fold !== null && fold !== undefined) fold.open = true
     }
 
+    /** The card's API-key field: the one password input it renders. */
+    function keyInputOf(card) {
+      if (card === null || card === undefined || typeof card.querySelectorAll !== 'function') return null
+      const inputs = card.querySelectorAll('input')
+      if (inputs === null || inputs === undefined || typeof inputs.length !== 'number') return null
+      for (let at = 0; at < inputs.length; at += 1) {
+        if (inputs[at] !== null && inputs[at] !== undefined && inputs[at].type === 'password') return inputs[at]
+      }
+      return null
+    }
+
+    /**
+     * Put the card's 取消/保存 directly under the API-key field.
+     *
+     * Everything else on this card writes itself now — the model list on add and
+     * delete, and every other field on its own edit — so the pair that used to
+     * mean "commit this whole card" only has the key left to commit. Moving it
+     * there is what makes that read off the screen instead of needing an
+     * explanation.
+     *
+     * A move, not a copy: dsh's own nodes keep their own handlers, and React only
+     * re-creates them when it re-creates the editor — at which point this runs
+     * again from {@link arrangeCard}. Nothing is removed from the DOM, so there is
+     * no node React would later fail to remove.
+     * @param card - the provider's card element.
+     */
+    function parkFooterUnderKey(card) {
+      if (card === null || card === undefined || typeof card.querySelectorAll !== 'function') return
+      const buttons = card.querySelectorAll('button')
+      if (buttons === null || buttons === undefined || typeof buttons.length !== 'number') return
+      let submit = null
+      let cancel = null
+      for (let at = 0; at < buttons.length; at += 1) {
+        const node = buttons[at]
+        if (node === null || node === undefined) continue
+        const label = typeof node.textContent === 'string' ? node.textContent.trim() : ''
+        if (submit === null && SUBMIT_LABELS.indexOf(label) !== -1) submit = node
+        if (cancel === null && CANCEL_LABELS.indexOf(label) !== -1) cancel = node
+      }
+      if (submit === null || cancel === null) return
+      // The footer is the smallest ancestor of the submit button that also holds
+      // the cancel one; its class is a CSS-module hash, this shape is not.
+      let footer = submit.parentElement
+      while (footer !== null && footer !== undefined && footer !== card
+        && typeof footer.contains === 'function' && !footer.contains(cancel)) {
+        footer = footer.parentElement
+      }
+      if (footer === null || footer === undefined || footer === card) return
+      const keyInput = keyInputOf(card)
+      const keyField = keyInput === null ? null : keyInput.parentElement
+      if (keyField === null || keyField === undefined || keyField.parentElement === null) return
+      if (keyField.nextElementSibling === footer) return
+      keyField.parentElement.insertBefore(footer, keyField.nextElementSibling)
+    }
+
+    /**
+     * Put one card's editor into the shape this plugin's copy describes: the model
+     * list unfolded, and the footer under the key it now belongs to.
+     *
+     * Called from both places the editor is (re)built: the 编辑 click dsh handles
+     * itself, and this plugin's own remount after a write.
+     * @param row - the provider's list item.
+     */
+    function arrangeCard(row) {
+      openEditorFold(row)
+      if (row !== null && row !== undefined) parkFooterUnderKey(row)
+    }
+
     /**
      * The folds this bundle has already revealed, one entry per editor mount.
      *
@@ -1193,7 +1464,9 @@ window.__ModuleLoader__.load({
 
     /** Reveal the mounted Kenari card's fold; a no-op while no card is on screen. */
     function revealEditorFold() {
-      revealFoldOf(markedCard())
+      const card = markedCard()
+      revealFoldOf(card)
+      parkFooterUnderKey(card)
     }
 
     /**
@@ -1242,7 +1515,7 @@ window.__ModuleLoader__.load({
           await afterPaint()
         }
       }
-      openEditorFold(row)
+      arrangeCard(row)
     }
 
     /**
@@ -2333,66 +2606,207 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * Drop models from the route's stored array, right away.
+       * Everything the card writes, collected and flushed as one write.
        *
-       * The deletion counterpart of {@link addModels}, and the reason a deletion
-       * does not need the card's 保存: the card's own removal only edits its draft,
-       * and a draft deletion is discarded the next time anything remounts the card
-       * — so a user who deleted a row and then added a model would watch the
-       * deleted row return. Writing here makes both paths land in the document,
-       * and both re-seed the card afterwards, which also refreshes the revision
-       * fence the card's next save is fenced on.
+       * The card used to hand dsh a draft and wait for its 保存; now every edit
+       * lands in the document as it is made — a removed row, a restored default
+       * catalog, a renamed model, an endpoint, a display name — and 保存 is left
+       * holding only the API key, which is why it sits under that field.
        *
-       * Deletions in a burst are collected and written once. Each write is a
-       * read-modify-write of the whole array, so firing one per click would let
-       * two of them read the same document and fence the second on a revision its
-       * predecessor had already superseded — the second deletion would be refused
-       * and the row would come back. One write per burst has no such window, and
-       * costs one card refresh instead of one per row.
+       * Collected rather than written per edit, for two reasons. Each write is a
+       * read-modify-write of the document, so overlapping ones would fence the
+       * second on a revision the first had already superseded and it would be
+       * refused; and a burst of keystrokes should be one write, not one per
+       * character (which is also what keeps a capacity typed as `1M` from being
+       * stored as `1` on its way through).
        *
-       * Only the models path is written. A key, name or endpoint typed into the
-       * card and not yet saved is untouched — those still travel with dsh's own
-       * 保存.
+       * The only edits that re-mount the card are the ones its own draft cannot
+       * show: removals and the default-catalog restore. A field edit is already on
+       * screen where the user typed it, and re-mounting under a caret would take
+       * the caret with it.
        */
-      const pendingRemovals = new Set()
-      let removalTimer = null
-      let removalTail = Promise.resolve()
-
-      const removeRouteModel = (card, modelId) => {
-        pendingRemovals.add(modelId)
-        if (removalTimer !== null) return
-        removalTimer = setTimeout(() => {
-          removalTimer = null
-          const ids = [...pendingRemovals]
-          pendingRemovals.clear()
-          const run = () => applyRemovals(card, ids)
-          removalTail = removalTail.then(run, run)
-        }, REMOVAL_DEBOUNCE_MS)
+      const pendingEdits = {
+        card: null,
+        removals: new Set(),
+        rows: new Map(),
+        paths: new Map(),
+        reset: false,
+        timer: null,
+        tail: Promise.resolve(),
       }
 
-      const applyRemovals = async (card, ids) => {
+      const cardEdit = (card, edit) => {
+        pendingEdits.card = card
+        if (edit.removal !== undefined) pendingEdits.removals.add(edit.removal)
+        if (edit.reset === true) pendingEdits.reset = true
+        if (edit.path !== undefined) pendingEdits.paths.set(edit.path, edit.value)
+        if (edit.row !== undefined) {
+          const at = pendingEdits.rows.get(edit.row.index) ?? {}
+          pendingEdits.rows.set(edit.row.index, { ...at, [edit.row.model]: edit.row.value })
+        }
+        if (pendingEdits.timer !== null) return
+        pendingEdits.timer = setTimeout(flushCardEdits, CARD_WRITE_DEBOUNCE_MS)
+      }
+
+      const flushCardEdits = () => {
+        pendingEdits.timer = null
+        const batch = {
+          card: pendingEdits.card,
+          removals: [...pendingEdits.removals],
+          rows: new Map(pendingEdits.rows),
+          paths: new Map(pendingEdits.paths),
+          reset: pendingEdits.reset,
+        }
+        pendingEdits.removals.clear()
+        pendingEdits.rows.clear()
+        pendingEdits.paths.clear()
+        pendingEdits.reset = false
+        const run = () => applyCardEdits(batch)
+        pendingEdits.tail = pendingEdits.tail.then(run, run)
+      }
+
+      const applyCardEdits = async (batch) => {
         try {
           const read = await readPiAi()
           if (read.failure !== undefined || read.view === undefined) return
-          // A read-only deployment keeps dsh's own behaviour: the rows stay draft
-          // edits, and the card is left alone rather than remounted out from under it.
+          // A read-only deployment keeps dsh's own behaviour: the card stays a
+          // draft, and it is left alone rather than re-mounted out from under it.
           if (read.writable !== true) return
-          const existing = routeModelsOf(read.view, KENARI_PROVIDER)
-          let next = existing
-          for (let at = 0; at < ids.length; at += 1) next = withoutModel(next, ids[at])
-          // None of them was stored: the draft edits already said everything there
-          // is to say, so there is nothing to write and nothing to re-seed.
-          if (next.length === existing.length) return
-          await routeScope.mutate(
-            [{ op: 'set', path: ['providers', KENARI_PROVIDER, 'models'], value: next }],
-            read.view.revision,
-          )
-          await remountEditorWhile(card, (shown) => ids.every((id) => shown.indexOf(id) === -1))
-        } catch (_removalFailure) {
-          // Fail-open: the rows stay in the document, so the card's own list keeps
-          // showing them — the user sees the deletion did not take, rather than a
-          // silent success.
+          const modelsPath = ['providers', KENARI_PROVIDER, 'models']
+          const ops = []
+          let afterWrite = null
+          if (batch.reset) {
+            ops.push({ op: 'unset', path: modelsPath })
+            afterWrite = () => true
+          } else {
+            const existing = routeModelsOf(read.view, KENARI_PROVIDER)
+            let next = existing
+            let changed = false
+            for (let at = 0; at < batch.removals.length; at += 1) {
+              const shortened = withoutModel(next, batch.removals[at])
+              if (shortened.length !== next.length) changed = true
+              next = shortened
+            }
+            const patched = patchModels(next, batch.card === null ? null : cardModelIds(batch.card), batch.rows)
+            if (patched !== next) changed = true
+            next = patched
+            if (changed) {
+              ops.push({ op: 'set', path: modelsPath, value: next })
+              if (batch.removals.length > 0) {
+                const removed = batch.removals
+                afterWrite = (shown) => removed.every((id) => shown.indexOf(id) === -1)
+              }
+            }
+          }
+          for (const [field, value] of batch.paths) {
+            ops.push(value === UNSET
+              ? { op: 'unset', path: ['providers', KENARI_PROVIDER, field] }
+              : { op: 'set', path: ['providers', KENARI_PROVIDER, field], value })
+          }
+          if (ops.length === 0) return
+          await routeScope.mutate(ops, read.view.revision)
+          if (afterWrite !== null && batch.card !== null) await remountEditorWhile(batch.card, afterWrite)
+        } catch (_cardWriteFailure) {
+          // Fail-open: nothing re-seeds the card, so a write that did not land
+          // shows as the old value in the card's own list rather than as a silent
+          // success.
         }
+      }
+
+      /** Take one edit off the card's inputs and queue it. */
+      const onCardField = (card, target, raw) => {
+        if (target.where === 'card') {
+          cardEdit(card, { path: target.path, value: raw.trim().length === 0 ? UNSET : raw })
+          return
+        }
+        if (target.capacity === true) {
+          const value = capacityOf(raw)
+          // Not a count this card can mean: the text stays where the user put it
+          // rather than being stored as something it is not.
+          if (value === undefined) return
+          cardEdit(card, { row: { index: target.index, model: target.model, value } })
+          return
+        }
+        const value = raw.trim()
+        if (target.model === 'id') {
+          // An id is the entry's identity: a blank or duplicated one names nothing
+          // the adapter could address, so it stays in the card unhidden.
+          if (value.length === 0) return
+          const shown = cardModelIds(card)
+          if (shown !== null && shown.filter((id) => id === value).length > 1) return
+        }
+        cardEdit(card, { row: { index: target.index, model: target.model, value: value.length === 0 ? UNSET : value } })
+      }
+
+      /**
+       * Commit the key the card's 保存 now stands for.
+       *
+       * The value crosses to the Host and never comes back (the credential seam
+       * has no read path), so this is the one edit with nothing to verify against:
+       * a store that is refused leaves the field filled and says so, rather than
+       * pretending.
+       */
+      const onCardKey = (card, raw) => {
+        const value = raw.trim()
+        if (value.length === 0) {
+          closeCard(card)
+          return
+        }
+        void storeKey(card, value)
+      }
+
+      const storeKey = async (card, value) => {
+        const read = await readPiAi()
+        if (read.failure !== undefined || read.view === undefined || read.writable !== true) return
+        const profile = pathGet(read.view.user, ['providers', KENARI_PROVIDER])
+        const named = profile !== null && typeof profile === 'object' ? profile.apiKeyEnv : undefined
+        const keyRef = typeof named === 'string' && named.length > 0 ? named : DEFAULT_KEY_REF
+        try {
+          await ctx.remote.credentials.set(keyRef, value)
+        } catch (err) {
+          showCardFailure(card, String(err !== null && err !== undefined && err.message ? err.message : err))
+          return
+        }
+        // dsh's own save records the reference the key was stored under; without it
+        // the route still resolves the same name by derivation, but the card would
+        // go on showing an endpoint it no longer names.
+        if (typeof named !== 'string' || named.length === 0) {
+          try {
+            await routeScope.mutate([{ op: 'set', path: ['providers', KENARI_PROVIDER, 'apiKeyEnv'], value: keyRef }], read.view.revision)
+          } catch (_referenceFailure) { /* the derived name is the same one */ }
+        }
+        clearCardFailure(card)
+        closeCard(card)
+      }
+
+      /** Fold the card away, the way dsh folds it after its own save. */
+      function closeCard(card) {
+        const toggle = editToggleOf(card)
+        if (toggle !== null && typeof toggle.click === 'function') toggle.click()
+      }
+
+      // The one place a refused key write can be seen: dsh's own error line is
+      // React's, so this is a node of this bundle's own, put under the key field
+      // and taken away again on the next attempt.
+      const CARD_FAILURE_ATTR = 'data-kenari-card-failure'
+
+      function clearCardFailure(card) {
+        if (card === null || card === undefined || typeof card.querySelector !== 'function') return
+        const shown = card.querySelector(`[${CARD_FAILURE_ATTR}]`)
+        if (shown !== null && shown !== undefined && typeof shown.remove === 'function') shown.remove()
+      }
+
+      function showCardFailure(card, message) {
+        if (card === null || card === undefined || typeof card.querySelector !== 'function') return
+        clearCardFailure(card)
+        if (typeof document.createElement !== 'function') return
+        const line = document.createElement('p')
+        line.setAttribute(CARD_FAILURE_ATTR, '')
+        line.setAttribute('style', 'margin:6px 0 0;font-size:12px;color:#d4380d')
+        line.textContent = message
+        const input = keyInputOf(card)
+        const field = input === null ? null : input.parentElement
+        if (field !== null && field !== undefined && typeof field.appendChild === 'function') field.appendChild(line)
       }
 
       const injected = () => ({ scope, loadModels, describeKey })
@@ -2432,7 +2846,12 @@ window.__ModuleLoader__.load({
       // One document-level listener, torn down with this fiber. It is inert
       // until the Kenari card mounts, because a click only means anything when
       // this plugin's dialog can answer it.
-      ctx.effect(() => installEntryTakeover({ onRemove: removeRouteModel }), 'kenari: 模型目录入口接管')
+      ctx.effect(() => installEntryTakeover({
+        onRemove: (card, modelId) => { cardEdit(card, { removal: modelId }) },
+        onReset: (card) => { cardEdit(card, { reset: true }) },
+        onField: onCardField,
+        onKey: onCardKey,
+      }), 'kenari: 模型目录入口接管')
       ensureDialogWidth()
 
       // The settings nav glyph. dsh picks its own by section id, so this is the
@@ -2452,6 +2871,13 @@ window.__ModuleLoader__.load({
       EDIT_LABELS,
       MODEL_ID_LABELS,
       REMOVE_LABELS,
+      SUBMIT_LABELS,
+      CANCEL_LABELS,
+      RESET_LABELS,
+      UNSET,
+      fieldTargetOf,
+      capacityOf,
+      patchModels,
       isRemoveLabel,
       removalRowOf,
       withoutModel,

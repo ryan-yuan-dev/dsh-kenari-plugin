@@ -555,6 +555,79 @@ check(
   )
 }
 
+// Every field on the card writes itself now, so the labels are the whole contract
+// between dsh's DOM and this bundle's settings writes: a field matched wrongly
+// would store a name under an endpoint's key. The row fields carry dsh's own row
+// number, and the card's own fields are exactly the same words with no number.
+{
+  const target = (label) => internals.fieldTargetOf(label)
+  check(
+    'card fields are matched exactly, and rows by their row number',
+    target('显示名称').where === 'card' && target('显示名称').path === 'displayName'
+    && target('API 地址').path === 'baseURL'
+    && target('API 协议').path === 'api'
+    && target('Display name').path === 'displayName'
+    && target('Base URL').path === 'baseURL'
+    && target('API protocol').path === 'api'
+    && target('模型 ID 3').where === 'row' && target('模型 ID 3').index === 2 && target('模型 ID 3').model === 'id'
+    && target('显示名称 3').model === 'name'
+    && target('上下文窗口 2').model === 'contextWindow' && target('上下文窗口 2').capacity === true
+    && target('最大输出 token 2').model === 'maxTokens' && target('最大输出 token 2').capacity === true
+    && target('Model ID 1').model === 'id'
+    && target('Context window 1').model === 'contextWindow'
+    && target('Max output tokens 1').model === 'maxTokens',
+  )
+  check(
+    'a label this bundle does not write is refused, not guessed',
+    target('API 密钥') === null
+    && target('模型 ID') === null
+    && target('模型 ID 0') === null
+    && target('模型 ID x') === null
+    && target('模型 ID 1x') === null
+    && target('模型 ID 1 ') === null
+    && target('自定义设置') === null
+    && target('') === null
+    && target(undefined) === null,
+  )
+  check(
+    'capacities read K and M the way the card spells them',
+    internals.capacityOf('8192') === 8192
+    && internals.capacityOf('256K') === 256000
+    && internals.capacityOf('1M') === 1000000
+    && internals.capacityOf(' 1.5M ') === 1500000
+    && internals.capacityOf('') === internals.UNSET
+    && internals.capacityOf('abc') === undefined
+    && internals.capacityOf('-1') === undefined
+    && internals.capacityOf('0') === undefined,
+  )
+  const patched = internals.patchModels(
+    [{ id: 'a', name: 'A', compat: { x: 1 } }, { id: 'b', name: 'B' }],
+    ['a', 'b'],
+    new Map([[1, { name: 'Bee' }]]),
+  )
+  check(
+    'a row edit lands on the row its id names, and leaves the rest of the entry alone',
+    patched[1].name === 'Bee' && patched[1].id === 'b'
+    && JSON.stringify(patched[0]) === JSON.stringify({ id: 'a', name: 'A', compat: { x: 1 } })
+    && internals.patchModels([{ id: 'a' }], ['a'], new Map([[0, { name: 'A' }]]))[0].name === 'A',
+  )
+  const renamed = internals.patchModels([{ id: 'a', name: 'A' }, { id: 'b' }], ['z', 'b'], new Map([[0, { id: 'z' }]]))
+  check(
+    'an id edit — the one edit that erases its own link — falls back to the row position',
+    renamed[0].id === 'z' && renamed[1].id === 'b',
+  )
+  const cleared = internals.patchModels([{ id: 'a', name: 'A' }], ['a'], new Map([[0, { name: internals.UNSET }]]))
+  check(
+    'an emptied field leaves the entry instead of being stored blank',
+    cleared.length === 1 && !('name' in cleared[0]),
+  )
+  const elsewhere = internals.patchModels([{ id: 'a', name: 'A' }, { id: 'b' }], ['b', 'a'], new Map([[0, { name: 'Bee' }]]))
+  check(
+    'an edit follows the id its row shows, wherever that entry sits',
+    elsewhere[1].name === 'Bee' && elsewhere[0].name === 'A',
+  )
+}
+
 // cardWithMarker walks from a button up to the first ancestor holding the
 // marker. The negative case is the one that matters: another provider's card
 // must not be claimed, because the native editor is that card's only writer.
