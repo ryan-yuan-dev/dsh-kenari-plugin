@@ -2716,10 +2716,11 @@ window.__ModuleLoader__.load({
        * character (which is also what keeps a capacity typed as `1M` from being
        * stored as `1` on its way through).
        *
-       * The only edits that re-mount the card are the ones its own draft cannot
-       * show: removals and the default-catalog restore. A field edit is already on
-       * screen where the user typed it, and re-mounting under a caret would take
-       * the caret with it.
+       * Only one edit re-mounts the card: restoring the shipped catalog, whose list
+       * the draft still holds. A field edit is already on screen where the user
+       * typed it (and re-mounting under a caret would take the caret with it), and a
+       * removal is already on screen too — dsh made that edit in the draft itself —
+       * so neither has anything to rebuild.
        */
       const pendingEdits = {
         card: null,
@@ -2770,10 +2771,11 @@ window.__ModuleLoader__.load({
           if (read.writable !== true) return
           const modelsPath = ['providers', KENARI_PROVIDER, 'models']
           const ops = []
-          let afterWrite = null
+          let remount = false
+          let removed = null
           if (batch.reset) {
             ops.push({ op: 'unset', path: modelsPath })
-            afterWrite = () => true
+            remount = true
           } else {
             const existing = routeModelsOf(read.view, KENARI_PROVIDER)
             let next = existing
@@ -2788,10 +2790,7 @@ window.__ModuleLoader__.load({
             next = patched
             if (changed) {
               ops.push({ op: 'set', path: modelsPath, value: next })
-              if (batch.removals.length > 0) {
-                const removed = batch.removals
-                afterWrite = (shown) => removed.every((id) => shown.indexOf(id) === -1)
-              }
+              if (batch.removals.length > 0) removed = batch.removals
             }
           }
           for (const [field, value] of batch.paths) {
@@ -2801,7 +2800,33 @@ window.__ModuleLoader__.load({
           }
           if (ops.length === 0) return
           await routeScope.mutate(ops, read.view.revision)
-          if (afterWrite !== null && batch.card !== null) await remountEditorWhile(batch.card, afterWrite)
+          // Restoring the shipped catalog is the one edit that needs the card
+          // rebuilt: its draft still holds the custom list, and nothing shorter of a
+          // remount can take it away.
+          if (remount && batch.card !== null) {
+            await remountEditorWhile(batch.card, () => true)
+            return
+          }
+          // A removal needs no remount at all. dsh made that edit in the card's own
+          // draft, so the row is already gone from the screen, and the draft and the
+          // document now say the same thing — collapsing the card here would only
+          // flash it away to rebuild what is already right (and, if the user had
+          // scrolled the list, drop them somewhere else). What is left to check is
+          // the document, not the card.
+          //
+          // A removal that did NOT land is the one case that has to be shown: the
+          // row is gone from the draft but still stored, so the card is rebuilt to
+          // put it back where the user can see that it survived.
+          if (removed !== null && batch.card !== null) {
+            const after = await readPiAi()
+            const stored = after.view === undefined
+              ? []
+              : routeModelsOf(after.view, KENARI_PROVIDER).map((model) => (model === null || model === undefined ? undefined : model.id))
+            const survived = removed.filter((id) => stored.indexOf(id) !== -1)
+            if (survived.length > 0) {
+              await remountEditorWhile(batch.card, (shown) => survived.some((id) => shown.indexOf(id) !== -1))
+            }
+          }
         } catch (_cardWriteFailure) {
           // Fail-open: nothing re-seeds the card, so a write that did not land
           // shows as the old value in the card's own list rather than as a silent
