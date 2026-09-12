@@ -79,7 +79,7 @@ Under **Settings → Models → Kenari → Edit → Model catalog**, "Add model"
 - Filters are `in plan`, `free`, and the capability tags. "In plan" and "free" are mutually exclusive, and `embedding` is exclusive on its own (it has no chat endpoint, so mixing it with anything returns an empty list). The rest combine
 - "Add selected" **appends** to the current entries, and rows already in the route cannot be selected
 
-The write is immediate with no save step, and the list inside that card refreshes only after you collapse and reopen Edit. The Host computes the data and serves it at `GET /api/kenari.models`, the same facts as `kenari_list_models`, and no key is needed.
+The write is immediate: the picker closes itself once it is done and those rows are already in the card behind it. Every other part of that card behaves the same way — display name, base URL, protocol, and each row's id, name, context window and max output are written as soon as you stop typing, and deleting a row or restoring the default catalog takes effect the moment you click. Which is why Cancel/Save now sit under the API key field and commit nothing but the key (they stay hidden while that field is empty). The Host computes the data and serves it at `GET /api/kenari.models`, the same facts as `kenari_list_models`, and no key is needed.
 
 ### Three protocol lines and the compat preset
 
