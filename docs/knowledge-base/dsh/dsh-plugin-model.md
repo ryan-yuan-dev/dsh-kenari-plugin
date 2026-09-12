@@ -134,6 +134,33 @@ dsh plugin --profile <name> remove <pkg>        # 卸载，同时移除依赖与
 
 首次使用 `dsh plugin` 会初始化 profile，以 `@deepseek-ai/dsh-base` 作为第一个 bundle。包若声明 `dsh.bundle`，`dsh` 会自动把它追加到 `dsh.profile.bundles`。
 
+### `add` 既是安装也是升级（2026-09-13 实测）
+
+同一命令带版本号就完成升级，profile 的依赖被换成那一个：
+
+```sh
+dsh plugin --profile web add my-plugin@0.2.3
+```
+
+- 本地目录安装与 registry 安装**互相替换**：先 `add link:/path`（或 `add "$PWD"`）再 `add my-plugin@0.2.3`，`node_modules` 里的软链会换成真实目录
+- **装完要重启**：新版本的 Host 侧要重新加载才生效，不要指望换完依赖就自动切过去（本仓库的升级流程一律在重启后复验）
+- 设置文档（`~/.dsh/settings.yaml`）不受影响，只替换依赖本身
+- 验证换过来了没有：`--dump-config` 看层，以及读 `node_modules/<pkg>/package.json` 的 `version`
+
+### pnpm 自动维护 `minimumReleaseAgeExclude`
+
+pnpm 12 有一道"新发布的包先别装"的供应链策略。用 `dsh plugin add` 装刚发布的版本时，它会自己把
+该版本追加进 profile 的 `pnpm-workspace.yaml`，然后照常安装：
+
+```
+Added 1 entry to minimumReleaseAgeExclude in pnpm-workspace.yaml
+  (set minimumReleaseAgeStrict to true to gate these updates with a prompt):
+  my-plugin@0.2.3
+```
+
+追加是**合并**进已有条目的（同一行累成 `pkg@0.1.1 || 0.2.0 || 0.2.3` 的形式），所以**不需要手动维护**
+这个列表——手动加只是重复它的动作。要让这类安装变成需要确认的门，设 `minimumReleaseAgeStrict: true`。
+
 ## 已发布的 profile 模板
 
 `web`、`headless`、`sdk`、`sdk-minimal`、`acp`。

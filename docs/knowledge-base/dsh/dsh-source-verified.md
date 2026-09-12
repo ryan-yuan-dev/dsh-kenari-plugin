@@ -420,7 +420,11 @@ slot 的 `SlotErrorBoundary` 捕获异常后渲染 `<div data-slot-error="<slotK
 
 - 页面出现 `data-slot-error` ≈ 你的组件在渲染期抛了
 - 只想看错误必须在**首次挂载前**挂 `console.error` 钩子（`componentDidCatch` 里 `console.error` 一次）
-- 没有打包器的包，值得在 build 里用 stub React **真实跑一次组件渲染**当编译期检查
+- 没有打包器的包，值得在 build 里用 stub React **真实跑一次组件渲染**当编译期检查。这个门禁的射程
+  比"不抛错"更远：stub 的 `useEffect` 是空函数、`useState` 返回初值，所以**读取数据的组件渲染出的
+  正是它的加载分支**；再配一个递归"展开函数组件元素"的 `expand()`，就能把组件树摊平成可断言的形状，
+  于是"加载态必须出现哪些槽位""某个分支必须保留某个容器"这类**结构不变量**能在 build 期钉住，
+  而这些在浏览器里只能靠肉眼和逐帧观察（本插件的 `scripts/check-client.mjs` 就是这么做的）
 
 ## 15. 第 7 期实读：Models 页扩展座、同源 Fetch 路由、以及"加不了 Remote 命名空间"（2026-09-11）
 
@@ -484,6 +488,16 @@ slot 的 `SlotErrorBoundary` 捕获异常后渲染 `<div data-slot-error="<slotK
 `reasoning_options` 里的 `none` 不是 dsh 的档位键（`off|minimal|low|medium|high|xhigh|max`），
 映射必须是 `off: 'none'`（键 dsh、值线上）；写错键整节 schema 校验失败、写入被拒。
 
+**重叠的读改写会互相围栏**：`SettingsScope.mutate(ops, expectedRevision)` 带着期望版本号写入，
+两个并发操作里后一个是基于**已被前一个取代**的 revision 算出来的，会被判为冲突拒掉。
+症状是"连点两次删除只生效一次"，而且不报错、界面也看不出来。正确做法是把连发操作**合并成一次写**
+（本插件的模型卡片用一个 120ms 的防抖批处理，把一段时间内的删除与字段编辑合成一个 `mutate`），
+或者自己串行化并在每次写前重读 revision。
+
+**写入成功与否由文档决定，不由返回值决定**：scope 不报告失败（被拒或没送达的写会重新加载镜像然后
+静默收场），所以判断"写进去了没有"必须回读文档。本插件每次写完都重新读一遍，只有文档里真的没有了
+才算删掉，否则才去重挂卡片。
+
 ### 浏览器基线的真实清单：`react-dom` 与 UI primitives 都在表里（第 7 期实测）
 
 - `PLATFORM_MODULES`（`packages/client/web/src/platform.ts`）= `react`、`react/jsx-runtime`、
@@ -526,3 +540,53 @@ slot 的 `SlotErrorBoundary` 捕获异常后渲染 `<div data-slot-error="<slotK
   不派发 click，这条回退只对可点的原生按钮有效
 - **写盘语义要自己扛**：插件的弹窗够不到编辑器的 draft，只能即时 `settings.mutate`；副作用是编辑器
   那份列表在重新展开前是旧的（dsh 自己的「重置模型目录」在编辑器开着时同样如此，不是插件引入的异常）
+
+## 16. `Modal` 实读：无动画、尺寸不受约束（2026-09-13）
+
+来源：`packages/client/ui-primitives/src/Modal.tsx` 与 `Modal.module.css`（vendor 源码），
+外加在安装版 0.1.5-rc.1 的浏览器里逐帧实测。
+
+### 没有任何动画，也没有退场阶段
+
+- `Modal.tsx:50` 是 `if (!open) return null`：**关闭态不渲染任何东西**，所以不存在"先播退场再卸载"
+  的可能。想让对话框淡出，只能由调用方自己延迟卸载（保持挂载 + 一个 closing 标记 + 定时器）
+- `Modal.module.css` 里**没有 transition、没有 @keyframes**。挂载即最终态，卸载即消失
+- 实测（1280×720，占满一帧的采样）：点「取消」到 `[role="dialog"]` 从 DOM 消失 **10ms**；
+  点开按钮到对话框出现 **12ms**。也就是一帧硬切
+- 结论：dsh 自己所有弹窗都是硬切，插件不引入动画不是缺失，而是与宿主一致。要加动画只能自己写，
+  且必须限定在插件自己的 `className` 作用域内
+
+### DOM 形状与可作用的钩子
+
+```
+body > .root (fixed inset:0, flex 居中, padding 24, 无 max-height)
+        ├── .mask  (absolute inset:0, aria-hidden="true", 点击 = onClose)
+        └── .dialog (role="dialog", aria-modal, aria-label = title, 拼接 className)
+              .content > (.header > h2 + .close) (.description?) (.body)
+              .footer (footer 槽)
+```
+
+- `className` 只合并进 `.dialog`；**没有 style 透传**。要按实例改宽度或尺寸，只能注入 CSS 规则，
+  并用 `[role="dialog"]` 限定来赢过基础规则的优先级（本插件的挑选器宽 820px 就是这么来的）
+- `.dialog` 基础宽度 `min(380px, 100%)`，适合 dsh 自己的短列表；带标签列的宽表格要自己加宽
+- 每个 class 都是 CSS module 哈希，**不要按 class 匹配**；`[role="dialog"]` 与 `aria-label`（= title）
+  是稳定钩子
+- Escape 与遮罩点击都走 `onClose`；`Modal` 只在 `open` 为真时挂 `keydown`
+
+### 尺寸完全由内容决定，且没有上限
+
+- `.root` 没有 `max-height`、也没有滚动容器（实测 `overflow: visible`、`max-height: none`），
+  尺寸安全完全由内容决定
+- padding 虽写 24px，但 `align-items: center` 在卡片高于可用空间时会把**负的剩余空间均分到上下**，
+  于是 padding 先被吃掉。实测：684px 的卡片在 720px 视口（可用 672px）里落成 top 18 / bottom 702，
+  两侧 padding 各被压掉 6px。**卡片高度超过视口高度（这里 720px）才会真正溢出**，在那之前只是
+  内边距被压缩。（按"684 + 48 > 720 所以溢出了"算会得出错误结论，要以实测为准）
+- 长列表的滚动必须自己给：给列表容器 `maxHeight` + `overflowY`（本插件用 `min(52vh, 420px)`）
+- **异步内容会让卡片在出现之后改变尺寸**，这是弹窗"不丝滑"的主要来源。一个先渲染一行加载提示、
+  数据到位再渲染完整面板的对话框，会在出现的下一帧长高：实测从 201px 到 684px，483px 的跳变，
+  而且冷缓存时加载态停留更久、两段式观感更明显
+- 要让尺寸稳定，**加载态必须渲染与就绪态同一副骨架**（工具条、摘要位、列表盒子都在，只有文字不同），
+  而不是只渲染一行提示。反过来，任何"某个分支少渲染一个容器"的写法都会破坏它：本插件的
+  `CatalogRows` 在过滤结果为空时曾把整个列表盒子换成一行提示，卡片立刻从 684px 塌到 309px
+- 列表盒子两端同尺寸（`minHeight` 与 `maxHeight` 取同一个值）还能顺带消掉"一边输入筛选词、
+  对话框一边缩放"的抖动
