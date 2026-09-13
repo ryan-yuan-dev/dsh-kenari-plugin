@@ -16,7 +16,13 @@
 
 ## 前提
 
-需要 dsh `0.1.5-rc.1`（全局安装，`dsh` 在 PATH）、Node.js >= 22，以及 pnpm（`dsh plugin` 底层转发给它）。dsh 子包必须与主版本对齐，装的时候显式带版本号，npm 的 `latest` 未必对得上：
+| 项 | 要求 |
+| --- | --- |
+| dsh | `0.1.5-rc.1`，全局安装，`dsh` 在 PATH |
+| Node.js | >= 22 |
+| pnpm | 必需，`dsh plugin` 底层转发给它 |
+
+dsh 的子包必须与主版本对齐，npm 的 `latest` 未必对得上，装的时候显式带版本号：
 
 ```sh
 dsh plugin --profile web add @deepseek-ai/dsh-web-fetch-http@0.1.5-rc.1
@@ -32,7 +38,14 @@ dsh --profile web --dump-config | grep -A3 dsh-kenari-plugin   # 确认 patch �
 dsh --profile web
 ```
 
-要固定版本就在包名后加，例如 `dsh-kenari-plugin@0.1.1`。改插件源码时换成 clone 安装：`pnpm install && pnpm build`，再 `dsh plugin --profile web add "$PWD"`，之后改源码只需重新 `pnpm build`。
+要固定版本就在包名后加，例如 `dsh-kenari-plugin@0.2.3`。
+
+改插件源码时换成 clone 安装，profile 会链到这个目录，之后改源码只需重新 `pnpm build`：
+
+```sh
+pnpm install && pnpm build
+dsh plugin --profile web add "$PWD"
+```
 
 ## 升级
 
@@ -46,7 +59,27 @@ dsh --profile web
 
 装完要重启 dsh：插件的 Host 侧与客户端 bundle 都是加载时定版的。升级只替换 profile 里那一份依赖，`~/.dsh/settings.yaml` 里的模型路由、密钥引用名、会话标题这些设置都不动，所以不需要重新配。
 
-不带版本号装的是 npm 的 `latest`；`npm view dsh-kenari-plugin version` 看当前发布的版本，仓库每版都打 `vX.Y.Z` 的 tag。要退回旧版就把版本号换成旧的再 add 一次。刚发布的版本 pnpm 会自己加进 profile 的 `pnpm-workspace.yaml`（`minimumReleaseAgeExclude`），不用手动处理。
+看当前装的是哪个版本：
+
+```sh
+grep '"version"' ~/.dsh/profiles/web/node_modules/dsh-kenari-plugin/package.json
+```
+
+不带版本号装的是 npm 的 `latest`；`npm view dsh-kenari-plugin version` 看当前发布的版本，仓库每版都打 `vX.Y.Z` 的 tag。
+
+- 要退回旧版，把版本号换成旧的再 add 一次
+- 刚发布的版本，pnpm 会自己加进 profile 的 `pnpm-workspace.yaml`（`minimumReleaseAgeExclude`），不用手动处理
+- 本地源码安装与 registry 安装互相替换：先 `add "$PWD"` 再 `add dsh-kenari-plugin@0.2.3`，`node_modules` 里的软链会换成真实目录
+
+插件把用到的 dsh 子包写进 `peerDependencies`，钉在 `0.1.5-rc.1`。dsh 自己升级后，等插件发到同一版本再跟着升；升完先 `dsh --profile web --dump-config` 复查 patch 层是否仍然生效。
+
+## 卸载
+
+```sh
+dsh plugin --profile web remove dsh-kenari-plugin
+```
+
+注册的一切都挂在 Cordis fiber 上，卸载即回收；dsh 的包与配置没有被改过。
 
 ## 配置密钥
 
@@ -60,7 +93,7 @@ dsh --profile web
 KENARI_API_KEY=kn-...
 ```
 
-不要写进 `cordis.patch.yml`。设置文档只存引用名，值不进日志、界面与配置。
+> 不要写进 `cordis.patch.yml`。设置文档只存引用名，值不进日志、界面与配置。
 
 ## 会话模型
 
@@ -79,21 +112,30 @@ KENARI_API_KEY=kn-...
 | `gpt-5-6-luna` | Kenari GPT 5.6 Luna | 872k | 64K | 视觉 + PDF，6 档 reasoning |
 | `mimo-v2-5` | Kenari MiMo v2.5 | 1.05M | 64K | 视觉 + 音频 + 视频 |
 
-四个都不是免费模型，**没有余额的新账户第一次会话会拿到 402**，先加一个 `:free` 模型或充值。`:free` 模型默认不进路由，用挑选器里的「免费」筛一下再加。
+> 四个都不是免费模型，没有余额的新账户第一次会话会拿到 402。先加一个 `:free` 模型或充值。`:free` 模型默认不进路由，用挑选器里的「免费」筛一下再加。
 
-显示名称与最大输出由插件推导（目录里都没有）：名称先还原自 id（目录自己带 `name` 的那几个模型照抄厂商写法）；**写进路由**的名字再统一加 `Kenari ` 前缀——dsh 的模型按钮和会话头部只有名字一个字段，不带前缀就分不出它是 Kenari 路由还是官方 DeepSeek 的同名模型；插件自己那一页的模型表不加前缀，整页都在 Kenari 节里，再加一遍是噪音。最大输出取窗口的 1/4 并夹在 [1K, 64K]，不公布窗口的模型不写这个字段。名称只用于展示，模型身份始终是 id。
+显示名称与最大输出由插件推导，目录里这两项都没有：
 
-你手动改过列表之后，用户配置整份覆盖预设（pi-ai 的语义），插件不再改。
+- 显示名先还原自 id；目录自带 `name` 的那几个照抄厂商写法
+- 写进路由的名字统一加 `Kenari ` 前缀。dsh 的模型按钮和会话头部只有名字一个字段，不带前缀就分不出它是 Kenari 路由还是官方 DeepSeek 的同名模型。插件自己那一页的模型表不加前缀，整页都在 Kenari 节里，再加一遍是噪音
+- 最大输出取上下文窗口的 1/4，夹在 [1K, 64K]；目录不公布窗口的模型不写这个字段
+- 名称只用于展示，模型身份始终是 id
 
-### 按能力和套餐挑模型
+> 你手动改过列表之后，用户配置整份覆盖预设（pi-ai 的语义），插件不再改。
 
-**Settings → 模型 → Kenari → 编辑 → 模型目录**里，「添加模型」和「获取可用模型」是同一个入口，都开这台挑选器。它用 dsh 自己的对话框组件，只多了筛选维度：
+### 挑选模型（能力与套餐）
+
+在 **Settings → 模型 → Kenari → 编辑 → 模型目录**里，「添加模型」和「获取可用模型」是同一个入口，都开这台挑选器。它用 dsh 自己的对话框组件，只多了筛选维度：
 
 - 每行显示模型 id 与能力标签（`image` `audio` `video` `pdf` `embedding`），付费模型另带「套餐内」标签，表示被某个订阅套餐覆盖。免费模型看 id 的 `:free` 后缀
 - 过滤片有 `套餐内` `免费` 与各能力标签。「套餐内」与「免费」互斥，`embedding` 独占（它没有 chat 端点，混选只会得到空列表），其余可多选
-- 「添加所选」**追加**到现有条目之后，已在路由里的行不能再勾
+- 「添加所选」追加到现有条目之后，已在路由里的行不能再勾
 
-写入是即时的：挑选器写完即关，卡片里当场多出那几行。卡片其余部分同理——显示名、API 地址、协议，以及每行的 id／显示名／上下文窗口／最大输出，都在改完（停止输入）后立即写入；删除一行与「恢复默认模型」也是点完即生效。正因如此，「取消／保存」被挪到 API 密钥字段下方，只负责提交密钥（密钥框为空时这两个按钮不显示）。数据由 Host 侧算好（`GET /api/kenari.models`），与 `kenari_list_models` 同源，没有 key 也能看。
+写入是即时的：挑选器写完即关，卡片里当场多出那几行。卡片其余部分同理，显示名、API 地址、协议，以及每行的 id、显示名、上下文窗口、最大输出，都在改完（停止输入）后立即写入；删除一行与「恢复默认模型」也是点完即生效。
+
+> 「取消／保存」被挪到 API 密钥字段下方，只负责提交密钥；密钥框为空时这两个按钮不显示。
+
+数据由 Host 侧算好（`GET /api/kenari.models`），与 `kenari_list_models` 同源，没有 key 也能看。
 
 ### 三条协议线与兼容预设
 
@@ -122,7 +164,7 @@ Kenari 有三条线，base URL 形状不同，写错返回 405 而不是 404：
 
 Kenari 路由上的会话模型调用失败后自动恢复：
 
-1. 按固定 5 秒间隔重试 5 次，**同一条路由**上重发，预算按路由计算
+1. 按固定 5 秒间隔重试 5 次，在同一条路由上重发，预算按路由计算
 2. 用尽后换一个窗口不小于当前模型的模型，先在同一个 provider 内挑最小的够用者，没有候选再跨 provider
 3. 仍失败则回退 dsh 的默认 provider 与模型
 
@@ -132,8 +174,11 @@ Kenari 路由上的会话模型调用失败后自动恢复：
 
 两处限制：
 
-- **重试由插件自己的恢复状态机执行，Kenari 路由上 dsh 自带的 `dsh-llm-retry` 被刻意关掉**（`cordis.patch.yml` 里 `providers.kenari.retryPolicy.maxRetries: 0`，插件自带适配器同理）。原因是它**会静默失效**：`agent/request-error` 是没有默认行为的瀑布，不调用 `next()` 的监听器会否决它后面的一切，而插件无法观察自己的注册顺序有没有被 live reload 之类的动作翻过来。实测线上会话里 `llm/retry` 事件数为 0、换模型发生在第一次失败上，承诺的重试从未执行。因此重试的预算只有一个来源：`modelRetryMaxRetries` / `modelRetryDelayMs` / `modelRetryableCodes`。如果你把该路由的 `retryPolicy` 改回大于 0，插件会在这条路由上让位给 dsh，两条机制不会各数一遍（`test/retry-repro.mjs` 的三个场景守着这条边界）。
-- **`TRANSPORT` 类失败在服务端可能已经完成并计费**，重试会重复扣费。介意就把 `modelRetryableCodes` 调小。这与生成类端点的「超时不重试」是两回事。
+- 重试由插件自己的恢复状态机执行，Kenari 路由上 dsh 自带的 `dsh-llm-retry` 被刻意关掉（`cordis.patch.yml` 里 `providers.kenari.retryPolicy.maxRetries: 0`，插件自带适配器同理）。
+  - 原因是它会静默失效：`agent/request-error` 是没有默认行为的瀑布，不调用 `next()` 的监听器会否决它后面的一切，而插件无法观察自己的注册顺序有没有被 live reload 之类的动作翻过来。
+  - 实测线上会话里 `llm/retry` 事件数为 0、换模型发生在第一次失败上，承诺的重试从未执行。因此重试的预算只有一个来源：`modelRetryMaxRetries` / `modelRetryDelayMs` / `modelRetryableCodes`。
+  - 如果你把该路由的 `retryPolicy` 改回大于 0，插件会在这条路由上让位给 dsh，两条机制不会各数一遍（`test/retry-repro.mjs` 的三个场景守着这条边界）。
+- `TRANSPORT` 类失败在服务端可能已经完成并计费，重试会重复扣费。介意就把 `modelRetryableCodes` 调小。这与生成类端点的「超时不重试」是两回事。
 
 字段与默认值见「配置项」。
 
@@ -141,7 +186,7 @@ Kenari 路由上的会话模型调用失败后自动恢复：
 
 新会话标题默认带 `20260911174258-` 形式的前缀，时间取本会话第一条人类消息的时间（本机时区）。前缀由插件写进 `session/title` 事件，Web、TUI、headless 看到同一个字符串。
 
-时间不用 `session.header.createdAt`（它记的是会话记录创建时间，dsh 复用空白会话时可能比真正开口早几个小时），完全没有人类消息时才退回它。
+时间不用 `session.header.createdAt`，它记的是会话记录创建时间，dsh 复用空白会话时可能比真正开口早几个小时；完全没有人类消息时才退回它。
 
 前缀是标题文本的一部分，不是独立的显示层。所以开关控制的是生成时写不写：关掉后新标题不带前缀，关闭期间落盘的标题文本本身就不含前缀；已有会话不会被回溯修改，改开关或模板都不会。
 
@@ -157,7 +202,7 @@ LLM 标题、确定性 fallback、手动 rename 一视同仁。fork 继承父标
 
 ## 计费与预算
 
-工具每次带一行费用回显：响应里有 `cost_micro_idr` 就写实际扣费，没有的（图像、视频、语音）按目录 `pricing_lines` 单价乘数量写预估。非 token 单位按整单位上取（21 字符的 TTS 计 1 个「1k 字符」单位）。
+工具每次带一行费用回显：响应里有 `cost_micro_idr` 就写实际扣费，没有的（图像、视频、语音）按目录 `pricing_lines` 单价乘数量写预估。非 token 单位按整单位上取，21 字符的 TTS 计 1 个「1k 字符」单位。
 
 `kenari_billing` 给会话累计、分工具与分模型、`cached_tokens` 命中率、预算余量、钱包余额；余额低于 `lowBalanceAlertRp` 时费用回显附一条告警。`budgetCapRp` 默认 0（不封顶），到顶后花费型工具会被拒绝。预检只看已记录的花费，所以它是「不再新增花钱调用」，不是「保证总额不超」。402、401、405、403 都带了可执行建议。
 
@@ -192,9 +237,15 @@ Settings → **Kenari**（命名空间 `kenari`）。分组顺序就是使用顺
 
 公开目录里没有 music 与 moderation 模型，所以 `kenari_music` 和 `kenari_moderate` 只会返回 400；`kenari_speech` 用 `mimo-v2-5-tts` 可用，`kokoro-tts` 与 `gemini-3-1-flash-tts` 是上游 400。
 
-## 可选：插件自带的 LlmAdapter
+## 可选方案
 
-`llm-pi-ai` 预设已经能把 Kenari 当会话模型用。把 `nativeAdapterEnabled` 设为 `true`（需重启）还能得到：模型选择器里直接看到价格、token 计量与 `cached_tokens` 命中率进 `kenari_billing`、推理档位按目录原样暴露（含 `none`）。
+### 自带 LlmAdapter
+
+`llm-pi-ai` 预设已经能把 Kenari 当会话模型用。把 `nativeAdapterEnabled` 设为 `true`（需重启）还能得到：
+
+- 模型选择器里直接看到价格
+- token 计量与 `cached_tokens` 命中率进 `kenari_billing`
+- 推理档位按目录原样暴露，含 `none`
 
 它注册的路由默认叫 `kenari-direct`，与预设的 `kenari` 不同名，两条可以并存，关掉开关即回退。相比预设，它不回放思考块、不注入 `file-parser`（文件块投影成说明文本，读文档请用 `kenari_ocr`）、不映射 `web_search_options`；图像输入是支持的。
 
@@ -205,20 +256,7 @@ Settings → **Kenari**（命名空间 `kenari`）。分组顺序就是使用顺
     nativeProviderId: kenari-direct
 ```
 
-## 故障排查
-
-| 症状 | 原因与处置 |
-| --- | --- |
-| 401 `invalid api key` | key 失效；`.env` 改完没重启 dsh；凭据引用名写错 |
-| 402 `insufficient_balance` | 用了付费模型但余额为 0。切 `:free` 模型或充值 |
-| 405 | base URL 形状错，见「三条协议线」 |
-| 启动报 `invalid config ... reasoningEfforts` | 该模型的 `reasoningEfforts` 键不在 `off..max` 里，改回或从预设删掉该模型 |
-| 403（balance / usage / quota） | key 来自分享页，这三个工具读 key 所有者的账户数据，所以被拒 |
-| 设置页 Kenari 卡片空白 | 客户端 bundle 没构建或服务名写错。跑 `pnpm build` 再重启 |
-| 导航里 Kenari 那行还是齿轮图标 | 图片没加载成功。确认包内含 `assets/kenari-favicon-128.png`，且 `GET /api/kenari.favicon` 能通 |
-| 模型列表是空的 | 预设未生效，`dsh --profile web --dump-config` 看 `llm-pi-ai` 段是否存在 |
-
-## 可选：只用 MCP，不装插件
+### 只用 MCP，不装插件
 
 Kenari 自带 Streamable HTTP MCP server（8 个工具，名字带 `mcp__kenari__` 前缀），配置如下：
 
@@ -228,13 +266,19 @@ Kenari 自带 Streamable HTTP MCP server（8 个工具，名字带 `mcp__kenari_
 
 代价是工具名带前缀、没有计费可视与余额预警、多一个运行时依赖。MCP 只适合先试一下。
 
-## 卸载
+## 故障排查
 
-```sh
-dsh plugin --profile web remove dsh-kenari-plugin
-```
-
-注册的一切都挂在 Cordis fiber 上，卸载即回收；dsh 的包与配置没有被改过。
+| 症状 | 原因与处置 |
+| --- | --- |
+| 401 `invalid api key` | key 失效；`.env` 改完没重启 dsh；凭据引用名写错 |
+| 402 `insufficient_balance` | 用了付费模型但余额为 0。切 `:free` 模型或充值 |
+| 403（balance / usage / quota） | key 来自分享页，这三个工具读 key 所有者的账户数据，所以被拒 |
+| 405 | base URL 形状错，见「三条协议线」 |
+| 启动报 `invalid config ... reasoningEfforts` | 该模型的 `reasoningEfforts` 键不在 `off..max` 里，改回或从预设删掉该模型 |
+| 设置页 Kenari 卡片空白 | 客户端 bundle 没构建或服务名写错。跑 `pnpm build` 再重启 |
+| 导航里 Kenari 那行还是齿轮图标 | 图片没加载成功。确认包内含 `assets/kenari-favicon-128.png`，且 `GET /api/kenari.favicon` 能通 |
+| 模型列表是空的 | 预设未生效，`dsh --profile web --dump-config` 看 `llm-pi-ai` 段是否存在 |
+| 升级后还是旧行为 | 装完没重启 dsh。Host 侧与客户端 bundle 都在加载时定版 |
 
 ## 配置项
 
@@ -286,7 +330,7 @@ KENARI_ALLOW_VIDEO=1 node test/billed-video.mjs   # 会真花钱：4s 视频，�
 
 `scripts/check-client.mjs` 随 `pnpm build` 运行，校验客户端 bundle 的注册格式、导出面、依赖声明与命名空间，并真实渲染一次卡片组件（手写的 bundle 没有打包器，这些就是它的编译期检查）。设计与实测记录在 `docs/` 下，面向要改这个插件的人。
 
-## 开发环境与致谢
+## 关于这个插件
 
 这个插件在 **ZCode** 里写的，会话模型主要用 opencode 的 DeepSeek V4.1 Flash 和 Kenari 的 `deepseek-v4-flash`。写它要反复读 dsh 的源码并跨文件改，选这两个是因为都扛得住长上下文。
 

@@ -16,7 +16,13 @@ Every capability registers through dsh's bundle patch layer and its public seams
 
 ## Requirements
 
-You need dsh `0.1.5-rc.1` (installed globally, `dsh` on PATH), Node.js >= 22, and pnpm (`dsh plugin` forwards to it). dsh subpackages must match the main version, so pin the version when installing one; npm's `latest` is not necessarily the right one:
+| Item | Requirement |
+| --- | --- |
+| dsh | `0.1.5-rc.1`, installed globally (`dsh` on PATH) |
+| Node.js | >= 22 |
+| pnpm | Required, since `dsh plugin` forwards to it |
+
+dsh subpackages must match the main version, so pin the version when installing one; npm's `latest` is not necessarily the right one:
 
 ```sh
 dsh plugin --profile web add @deepseek-ai/dsh-web-fetch-http@0.1.5-rc.1
@@ -32,7 +38,14 @@ dsh --profile web --dump-config | grep -A3 dsh-kenari-plugin   # confirm the pat
 dsh --profile web
 ```
 
-To pin a version, append it to the name, for example `dsh-kenari-plugin@0.1.1`. To work on the plugin source, install from a clone instead: `pnpm install && pnpm build`, then `dsh plugin --profile web add "$PWD"`. The profile links to that directory, so after installing you only rerun `pnpm build` for source changes.
+To pin a version, append it to the name, for example `dsh-kenari-plugin@0.2.3`.
+
+To work on the plugin source, install from a clone instead. The profile links to that directory, so after installing you only rerun `pnpm build` for source changes:
+
+```sh
+pnpm install && pnpm build
+dsh plugin --profile web add "$PWD"
+```
 
 ## Upgrade
 
@@ -44,9 +57,29 @@ dsh --profile web --dump-config | grep -A3 dsh-kenari-plugin   # confirm the swa
 dsh --profile web
 ```
 
-Restart dsh afterwards: both halves of the plugin, the Host side and the client bundle, are pinned at load time. An upgrade replaces only that one dependency inside the profile — the model route, key reference name and session-title settings in `~/.dsh/settings.yaml` are left alone, so there is nothing to reconfigure.
+Restart dsh afterwards: both halves of the plugin, the Host side and the client bundle, are pinned at load time. An upgrade replaces only that one dependency inside the profile, and the model route, key reference name and session-title settings in `~/.dsh/settings.yaml` are left alone, so there is nothing to reconfigure.
 
-Without a version you get npm's `latest`; `npm view dsh-kenari-plugin version` reports what is published and every release is tagged `vX.Y.Z` in the repository. To roll back, add the older version the same way. pnpm adds a freshly published version to the profile's `pnpm-workspace.yaml` (`minimumReleaseAgeExclude`) by itself, so that step needs no hand-holding.
+To see which version is installed:
+
+```sh
+grep '"version"' ~/.dsh/profiles/web/node_modules/dsh-kenari-plugin/package.json
+```
+
+Without a version you get npm's `latest`; `npm view dsh-kenari-plugin version` reports what is published, and every release is tagged `vX.Y.Z` in the repository.
+
+- To roll back, add the older version the same way
+- pnpm adds a freshly published version to the profile's `pnpm-workspace.yaml` (`minimumReleaseAgeExclude`) by itself, so that step needs no hand-holding
+- A local source install and a registry install replace each other: run `add "$PWD"` and then `add dsh-kenari-plugin@0.2.3`, and the symlink in `node_modules` becomes a real directory
+
+The plugin lists the dsh subpackages it uses in `peerDependencies`, pinned to `0.1.5-rc.1`. When dsh itself moves, wait for a plugin release on the same version before following, and run `dsh --profile web --dump-config` afterwards to re-check that the patch layer still applies.
+
+## Uninstall
+
+```sh
+dsh plugin --profile web remove dsh-kenari-plugin
+```
+
+Everything the plugin registers hangs off a Cordis fiber and is reclaimed on unload; no dsh package or config was changed.
 
 ## Set up your key
 
@@ -60,7 +93,7 @@ In the Kenari dashboard, go to API keys → Create key and copy the `kn-...` val
 KENARI_API_KEY=kn-...
 ```
 
-Do not put it in `cordis.patch.yml`. The settings document stores the reference name only, and the value never reaches logs, the UI, or config.
+> Do not put it in `cordis.patch.yml`. The settings document stores the reference name only, and the value never reaches logs, the UI, or config.
 
 ## Session models
 
@@ -79,11 +112,16 @@ When the plan cannot be read (no key, a share-page key that gets 403, an account
 | `gpt-5-6-luna` | Kenari GPT 5.6 Luna | 872k | 64K | vision + PDF, 6 reasoning levels |
 | `mimo-v2-5` | Kenari MiMo v2.5 | 1.05M | 64K | vision + audio + video |
 
-None of the four is free, so **a new account with no balance hits 402 on its first session**. Add a `:free` model or top up first. `:free` models stay out of the route by default; filter by "free" in the picker to add them.
+> None of the four is free, so a new account with no balance hits 402 on its first session. Add a `:free` model or top up first. `:free` models stay out of the route by default; filter by "free" in the picker to add them.
 
-Display names and output caps are derived by the plugin, since the catalog publishes neither. A name is reconstructed from the id (the few models whose catalog entry carries a `name` keep the vendor's wording). Names **written into the route** additionally carry a `Kenari ` prefix — dsh's model button and session header show the name alone, so without it a Kenari route is indistinguishable from an official DeepSeek model of the same name — while the plugin's own model table stays unprefixed, because that page already is the Kenari section. The output cap is a quarter of the context window, clamped to [1K, 64K]; models without a published window get no cap field. The name is presentation only; a model's identity is always its id.
+Display names and output caps are derived by the plugin, since the catalog publishes neither:
 
-Once you edit the list yourself, your config replaces the preset as a whole (pi-ai's semantics) and the plugin stops touching it.
+- A display name is reconstructed from the id, except for the few models whose catalog entry carries a `name`, which keep the vendor's wording
+- Names written into the route carry a `Kenari ` prefix. dsh's model button and session header show the name alone, so without it a Kenari route is indistinguishable from an official DeepSeek model of the same name. The plugin's own model table stays unprefixed, because that page already is the Kenari section
+- The output cap is a quarter of the context window, clamped to [1K, 64K]; models without a published window get no cap field
+- The name is presentation only; a model's identity is always its id
+
+> Once you edit the list yourself, your config replaces the preset as a whole (pi-ai's semantics) and the plugin stops touching it.
 
 ### Picking models by capability and plan
 
@@ -91,9 +129,13 @@ Under **Settings → Models → Kenari → Edit → Model catalog**, "Add model"
 
 - Each row shows the model id and capability tags (`image` `audio` `video` `pdf` `embedding`). Paid models also carry an "in plan" tag meaning a subscription plan covers them; free models are recognisable by the `:free` suffix
 - Filters are `in plan`, `free`, and the capability tags. "In plan" and "free" are mutually exclusive, and `embedding` is exclusive on its own (it has no chat endpoint, so mixing it with anything returns an empty list). The rest combine
-- "Add selected" **appends** to the current entries, and rows already in the route cannot be selected
+- "Add selected" appends to the current entries, and rows already in the route cannot be selected
 
-The write is immediate: the picker closes itself once it is done and those rows are already in the card behind it. Every other part of that card behaves the same way — display name, base URL, protocol, and each row's id, name, context window and max output are written as soon as you stop typing, and deleting a row or restoring the default catalog takes effect the moment you click. Which is why Cancel/Save now sit under the API key field and commit nothing but the key (they stay hidden while that field is empty). The Host computes the data and serves it at `GET /api/kenari.models`, the same facts as `kenari_list_models`, and no key is needed.
+The write is immediate: the picker closes itself once it is done and those rows are already in the card behind it. Every other part of that card behaves the same way, so display name, base URL, protocol, and each row's id, name, context window and max output are written as soon as you stop typing, and deleting a row or restoring the default catalog takes effect the moment you click.
+
+> Cancel/Save sit under the API key field and commit nothing but the key; they stay hidden while that field is empty.
+
+The Host computes the data and serves it at `GET /api/kenari.models`, the same facts as `kenari_list_models`, and no key is needed.
 
 ### Three protocol lines and the compat preset
 
@@ -122,7 +164,7 @@ The `available()` contract forbids network calls, so a Kenari outage only surfac
 
 A failed session model call on a Kenari route recovers on its own:
 
-1. Retry 5 times at a fixed 5 second interval **on the same route**, with the budget counted per route
+1. Retry 5 times at a fixed 5 second interval on the same route, with the budget counted per route
 2. When retries run out, switch to a model with at least as large a window, preferring the smallest adequate one in the same provider before crossing providers
 3. If that also fails, fall back to dsh's default provider and model
 
@@ -132,8 +174,11 @@ Only when all three fail does the turn error out. Retry and switching happen ins
 
 Two limits:
 
-- **Retrying is done by the plugin's own recovery state machine; dsh's `dsh-llm-retry` is deliberately switched off on Kenari routes** (`providers.kenari.retryPolicy.maxRetries: 0` in `cordis.patch.yml`, same for the plugin's own adapter). The reason is that it **fails silently**: `agent/request-error` has no default behaviour, so a listener that does not call `next()` vetoes everything after it, and the plugin cannot observe whether a live reload reordered that chain. Measured on a live session: zero `llm/retry` events and the model switch happened on the first failure — the promised retries never ran. There is therefore exactly one source for the retry budget: `modelRetryMaxRetries` / `modelRetryDelayMs` / `modelRetryableCodes`. If you set that route's `retryPolicy` back above 0, the plugin steps aside and lets dsh own it, so the two never count the same retry twice (the three scenarios in `test/retry-repro.mjs` guard this boundary).
-- **A `TRANSPORT` failure may have completed and been billed on the server**, so retrying can bill twice. Narrow `modelRetryableCodes` if that matters. This is separate from the no-retry-on-timeout rule for generation endpoints.
+- Retrying is done by the plugin's own recovery state machine, and dsh's `dsh-llm-retry` is deliberately switched off on Kenari routes (`providers.kenari.retryPolicy.maxRetries: 0` in `cordis.patch.yml`, same for the plugin's own adapter).
+  - The reason is that it fails silently: `agent/request-error` has no default behaviour, so a listener that does not call `next()` vetoes everything after it, and the plugin cannot observe whether a live reload reordered that chain.
+  - Measured on a live session: zero `llm/retry` events and the model switch happened on the first failure, so the promised retries never ran. There is therefore exactly one source for the retry budget: `modelRetryMaxRetries` / `modelRetryDelayMs` / `modelRetryableCodes`.
+  - If you set that route's `retryPolicy` back above 0, the plugin steps aside and lets dsh own it, so the two never count the same retry twice (the three scenarios in `test/retry-repro.mjs` guard this boundary).
+- A `TRANSPORT` failure may have completed and been billed on the server, so retrying can bill twice. Narrow `modelRetryableCodes` if that matters. This is separate from the no-retry-on-timeout rule for generation endpoints.
 
 Field defaults are in "Configuration reference".
 
@@ -141,7 +186,7 @@ Field defaults are in "Configuration reference".
 
 New session titles carry a prefix like `20260911174258-`. The timestamp is the time of the session's first human message, in local time. The plugin writes it into the `session/title` event, so Web, TUI, and headless render the same string.
 
-The timestamp does not come from `session.header.createdAt` (that records session creation, which dsh may have done hours earlier when it reused a blank session). It is the fallback for a session with no human message at all.
+The timestamp does not come from `session.header.createdAt`, which records session creation and, when dsh reuses a blank session, may be hours earlier than the first thing actually said. It is the fallback for a session with no human message at all.
 
 The prefix is part of the title text, not a separate display layer, so the setting controls whether one is written at generation time: with it off, new titles have no prefix, and a title written while it was off contains no prefix in its text. Existing sessions are never rewritten, by the switch or the template.
 
@@ -157,7 +202,7 @@ Field defaults are in "Configuration reference".
 
 ## Billing and budget
 
-Each tool call returns a cost line: `cost_micro_idr` when the response carries it, otherwise an estimate from the catalog's `pricing_lines` multiplied by quantity for images, video, and speech. Non-token units round up to whole units (a 21-character TTS call counts as one 1k-character unit).
+Each tool call returns a cost line: `cost_micro_idr` when the response carries it, otherwise an estimate from the catalog's `pricing_lines` multiplied by quantity for images, video, and speech. Non-token units round up to whole units, so a 21-character TTS call counts as one 1k-character unit.
 
 `kenari_billing` reports per-session totals, a breakdown by tool and model, `cached_tokens` hit rate, remaining budget, and wallet balance; below `lowBalanceAlertRp` the cost line gains a warning. `budgetCapRp` defaults to 0, meaning no cap, and spending tools are refused once it is reached. The pre-check only sees recorded spending, so it stops new billed calls rather than guaranteeing a total. 402, 401, 405, and 403 all carry actionable guidance.
 
@@ -192,9 +237,15 @@ Images, audio, and video land on disk through `ctx.attachments` as image or file
 
 The public catalog has no music or moderation model, so `kenari_music` and `kenari_moderate` only return 400. `kenari_speech` works with `mimo-v2-5-tts`, while `kokoro-tts` and `gemini-3-1-flash-tts` return an upstream 400.
 
-## Optional: the plugin's own LlmAdapter
+## Optional setups
 
-The `llm-pi-ai` preset already runs Kenari as a session model. Setting `nativeAdapterEnabled` to `true` (restart required) adds pricing in the model picker, token accounting and `cached_tokens` hit rate in `kenari_billing`, and reasoning levels exposed exactly as the catalog reports them, `none` included.
+### The plugin's own LlmAdapter
+
+The `llm-pi-ai` preset already runs Kenari as a session model. Setting `nativeAdapterEnabled` to `true` (restart required) also gives you:
+
+- Pricing in the model picker
+- Token accounting and `cached_tokens` hit rate in `kenari_billing`
+- Reasoning levels exposed exactly as the catalog reports them, `none` included
 
 Its route is named `kenari-direct` by default, distinct from the preset's `kenari`, so both coexist and turning the switch off reverts. Compared with the preset it does not replay thinking blocks, inject `file-parser` (file blocks project to explanatory text, so use `kenari_ocr` to read documents), or map `web_search_options`; image input works.
 
@@ -205,20 +256,7 @@ Its route is named `kenari-direct` by default, distinct from the preset's `kenar
     nativeProviderId: kenari-direct
 ```
 
-## Troubleshooting
-
-| Symptom | Cause and fix |
-| --- | --- |
-| 401 `invalid api key` | The key is dead; dsh was not restarted after a `.env` edit; the credential reference name is wrong |
-| 402 `insufficient_balance` | A paid model with a zero balance. Switch to a `:free` model or top up |
-| 405 | Wrong base URL shape, see "Three protocol lines" |
-| Startup fails with `invalid config ... reasoningEfforts` | That model's `reasoningEfforts` key is outside `off..max`. Revert it or drop the model from the preset |
-| 403 on balance, usage, or quota | The key came from a share page, and those tools read the key owner's account data |
-| The Kenari card in settings is blank | The client bundle was not built, or the service name is wrong. Run `pnpm build` and restart |
-| The nav row still shows a gear | The image did not load. Check that the package contains `assets/kenari-favicon-128.png` and that `GET /api/kenari.favicon` responds |
-| The model list is empty | The preset did not apply. Check `llm-pi-ai` in `dsh --profile web --dump-config` |
-
-## Optional: MCP without the plugin
+### MCP only, without the plugin
 
 Kenari ships a Streamable HTTP MCP server with 8 tools, named with the `mcp__kenari__` prefix:
 
@@ -228,13 +266,19 @@ Kenari ships a Streamable HTTP MCP server with 8 tools, named with the `mcp__ken
 
 The trade is prefixed tool names, no cost visibility or balance warnings, and one more runtime dependency. MCP is for a quick trial.
 
-## Uninstall
+## Troubleshooting
 
-```sh
-dsh plugin --profile web remove dsh-kenari-plugin
-```
-
-Everything the plugin registers hangs off a Cordis fiber and is reclaimed on unload; no dsh package or config was changed.
+| Symptom | Cause and fix |
+| --- | --- |
+| 401 `invalid api key` | The key is dead; dsh was not restarted after a `.env` edit; the credential reference name is wrong |
+| 402 `insufficient_balance` | A paid model with a zero balance. Switch to a `:free` model or top up |
+| 403 on balance, usage, or quota | The key came from a share page, and those tools read the key owner's account data |
+| 405 | Wrong base URL shape, see "Three protocol lines" |
+| Startup fails with `invalid config ... reasoningEfforts` | That model's `reasoningEfforts` key is outside `off..max`. Revert it or drop the model from the preset |
+| The Kenari card in settings is blank | The client bundle was not built, or the service name is wrong. Run `pnpm build` and restart |
+| The nav row still shows a gear | The image did not load. Check that the package contains `assets/kenari-favicon-128.png` and that `GET /api/kenari.favicon` responds |
+| The model list is empty | The preset did not apply. Check `llm-pi-ai` in `dsh --profile web --dump-config` |
+| Nothing changed after an upgrade | dsh was not restarted. Both the Host side and the client bundle are pinned at load time |
 
 ## Configuration reference
 
@@ -286,7 +330,7 @@ KENARI_ALLOW_VIDEO=1 node test/billed-video.mjs   # spends real money: 4s video,
 
 `scripts/check-client.mjs` runs as part of `pnpm build`. It checks the client bundle's registration format, export surface, dependency declarations, and namespace, and renders the settings card for real (the bundle is hand-written with no bundler, so these checks are its compile step). Design and measurement notes live under `docs/`, written for people changing this plugin.
 
-## How this was built
+## About this plugin
 
 The plugin was written in **ZCode**, with session models from opencode's DeepSeek V4.1 Flash and Kenari's `deepseek-v4-flash`. Building it meant reading dsh's source repeatedly and editing across files, so both were picked for holding a long context.
 
@@ -294,6 +338,8 @@ If you want a similar setup, these are the two I actually use:
 
 - **[Kenari](https://kenari.id/code/KNR-KKRNAJ)**: one key reaches models from several vendors, more than 70 in the catalog, from DeepSeek, GLM and GPT through speech, image, video, OCR, embeddings and rerank. It speaks OpenAI-compatible, Anthropic-compatible and Responses, so an existing client needs only a new base URL. Billing comes both per use and as a monthly plan, in Rupiah, with a low top-up minimum (QRIS from Rp 1,000). The catalog and docs endpoints are public, so you can see what you get before paying.
 - **[opencode Go](https://opencode.ai/go?ref=343F5JW4RA)**: $10 a month with quota per 5 hour window instead of per-token billing, and you can top up credit when the quota runs short. It works with any agent, which is why it runs the dsh session model here.
+
+Both accept Alipay QR payments.
 
 ## License
 
